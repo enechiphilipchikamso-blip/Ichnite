@@ -1,1 +1,1 @@
-# soltrace.
+# soltrace
