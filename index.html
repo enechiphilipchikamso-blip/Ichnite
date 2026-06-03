@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="description" content="SolTrace — Check any Solana wallet instantly." />
+  <meta name="author" content="Philip" />
+  <meta property="og:title" content="SolTrace" />
+  <meta property="og:description" content="Check any Solana wallet instantly." />
+  <meta property="og:type" content="website" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="CSS/style.css" />
+  <title>SolTrace</title>
+</head>
+
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    const logo = document.getElementById('solLogo');
+    const hostedBackup = 'https://example.com'; // <-- Put your live website link here
+    
+    if (logo) {
+      const localPath = logo.getAttribute('data-src');
+      
+      // 1. Create an invisible "test" image in memory
+      const testImg = new Image(); 
+      
+      // 2. Tell the test image what to do if the local file works
+      testImg.onload = function() {
+        logo.src = localPath; // Local file is good! Show it on the page.
+      };
+      
+      // 3. Tell the test image what to do if the local file is broken
+      testImg.onerror = function() {
+        logo.src = hostedBackup; // Local file is broken! Load the website link instead.
+      };
+      
+      // 4. Start the background test
+      testImg.src = localPath; 
+    }
+  });
+</script>
+
+<body>
+
+  <!-- Header -->
+  <header>
+    <h1>SolTrace</h1>
+    <p class="subtitle">Solana Wallet Checker</p>
+  </header>
+
+<div class="main-wrapper">
+
+  <!-- Search Section -->
+  <main>
+    <div class="search-box">
+      <input
+        type="text"
+        id="walletInput"
+        placeholder="Paste Solana wallet address..."
+      />
+      <button id="searchBtn">Trace</button>
+    </div>
+    <p id="errorMsg" class="error hidden">Invalid Solana address. Please try again.</p>
+  </main>
+
+  <!-- Results Section -->
+  <section id="results" class="hidden">
+
+    <!-- Card 1 — SOL Balance -->
+ <div class="card">
+  <h2>SOL Balance</h2>
+
+  <!-- Skeleton -->
+  <div id="solSkeleton">
+    <div class="skeleton skeleton-line"></div>
+    <div class="skeleton skeleton-line short"></div>
+  </div>
+
+  <!-- Real Content -->
+  <div id="solPriceRow" class="sol-price-row hidden">
+    <img
+  id="solLogo"
+  src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+  data-src="sol-logo.png"
+  alt="SOL"
+  class="token-logo"
+  loading="lazy"
+  onerror="this.src='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='"
+/>
+    <span id="solPrice" class="sol-price"></span>
+    <span id="solPriceChange" class="sol-change"></span>
+  </div>
+  <div id="solBalanceRow" class="sol-balance-row hidden">
+    <span id="solBalance" class="sol-balance-amount"></span>
+    <span id="solBalanceUsd" class="sol-balance-usd"></span>
+  </div>
+</div>
+
+    <!-- Card 2 — Token Holdings -->
+    <div class="card">
+      <h2>Token Holdings</h2>
+      <!-- Skeleton -->
+<div id="tokenSkeleton">
+  <div class="skeleton skeleton-token-row"></div>
+  <div class="skeleton skeleton-token-row"></div>
+  <div class="skeleton skeleton-token-row"></div>
+</div>
+
+<!-- Real Content -->
+<div id="tokenList" class="hidden"></div>
+
+<!-- Pie Chart Skeleton -->
+<div id="pieSkeleton" class="skeleton skeleton-pie-chart"></div>
+
+<!-- Pie Chart Spinner -->
+<div id="pieSpinner" class="spinner hidden"></div>
+
+<!-- Real Pie Chart -->
+<canvas id="pieChart" class="hidden"></canvas>
+</div>
+
+    <!-- Card 3 — NFTs -->
+    <div class="card">
+      <h2>NFTs</h2>
+      <!-- Skeleton -->
+<div id="nftSkeleton">
+  <div class="skeleton skeleton-line"></div>
+  <div class="nft-skeleton-grid">
+    <div class="skeleton skeleton-nft-card"></div>
+    <div class="skeleton skeleton-nft-card"></div>
+    <div class="skeleton skeleton-nft-card"></div>
+    <div class="skeleton skeleton-nft-card"></div>
+  </div>
+</div>
+
+<!-- Real Content -->
+<div id="nftList" class="hidden"></div>
+<div id="nftGrid" class="hidden"></div>
+</div>
+
+    <!-- Card 4 — Wallet Activity -->
+    <div class="card">
+      <h2>Wallet Activity</h2>
+
+      <!-- Chart Toggles -->
+      <div class="chart-toggle">
+        <button class="toggleBtn active" data-range="days">Days</button>
+        <button class="toggleBtn" data-range="month">Month</button>
+        <button class="toggleBtn year-btn" data-range="year">Year</button>
+      </div>
+
+      <!-- Year Dropdown -->
+      <div id="yearDropdown" class="year-dropdown hidden">
+        <p>Select how many years</p>
+        <button class="yearOption" data-year="1">1 Year</button>
+        <button class="yearOption" data-year="2">2 Years</button>
+        <button class="yearOption" data-year="3">3 Years</button>
+        <button class="yearOption" data-year="4">4 Years</button>
+        <button class="yearOption" data-year="5">5 Years</button>
+      </div>
+
+      <!-- Bar Chart -->
+      <div class="chart-scroll-wrapper">
+  <!-- Skeleton -->
+  <div id="barSkeleton" class="skeleton skeleton-bar-chart"></div>
+
+  <!-- Spinner -->
+  <div id="barSpinner" class="spinner hidden"></div>
+
+  <!-- Real Chart -->
+  <canvas id="barChart" class="hidden"></canvas>
+</div>
+
+      <!-- Recent Transactions -->
+      <h3>Recent Transactions</h3>
+
+<!-- Skeleton -->
+<div id="txSkeleton">
+  <div class="skeleton skeleton-line"></div>
+  <div class="skeleton skeleton-line"></div>
+  <div class="skeleton skeleton-line"></div>
+  <div class="skeleton skeleton-line"></div>
+  <div class="skeleton skeleton-line short"></div>
+</div>
+
+<!-- Real Content -->
+<div id="last7txList" class="hidden"></div>
+
+      <!-- Solscan Link -->
+      <p class="solscan-text">See more transactions
+        <a id="solscanLink" 
+   href="#" 
+   target="_blank" 
+   rel="noopener noreferrer">
+   solscan.io ↗
+       </a>
+      </p>
+
+    </div>
+
+  </section>
+
+  <!-- Footer -->
+  <footer>
+
+    <!-- Disclaimer — Full Width -->
+    <div class="accordion full-width">
+      <button class="accordion-btn">
+        Disclaimer <span class="arrow">▼</span>
+      </button>
+      <div class="accordion-content hidden">
+        <p class="text" class="faq-a">SolTrace is a read-only tool. We do not store, collect or save any wallet data.<br> All data displayed is publicly available on the Solana blockchain.<br> SolTrace is not a financial advisor. Nothing on this platform should be considered financial advice.
+        </p>
+      </div>
+    </div>
+
+    <!-- FAQ — Full Width -->
+    <div class="accordion full-width">
+      <button class="accordion-btn">
+        FAQ <span class="arrow">▼</span>
+      </button>
+      <div class="accordion-content hidden">
+        <div class="faq-item">
+          <p class="faq-q">What is SolTrace?</p>
+          <p class="faq-a">SolTrace is a Solana wallet checker. Paste any Solana wallet address and instantly view SOL balance, token holdings, NFTs and transaction history.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">Is my wallet safe?</p>
+          <p class="faq-a">Yes, SolTrace is read-only. We never ask for your private key or seed phrase. We cannot access, move or modify your funds in any way.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">Why is my balance not showing?</p>
+          <p class="faq-a">Make sure you have pasted a valid Solana wallet address. If the problem continues the Solana network may be experiencing delays. Try again shortly.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">What wallets does SolTrace support?</p>
+          <p class="faq-a">SolTrace supports any valid Solana wallet address. Simply paste your address and SolTrace will do the rest.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Social Links and Feedback — Side by Side -->
+    <div class="footer-row">
+
+      <!-- Social Links -->
+      <div class="accordion half-width">
+        <button class="accordion-btn">
+          Social Links <span class="arrow">▼</span>
+        </button>
+        <div class="accordion-content hidden">
+          <div class="social-row">
+            <img src="logo.png" alt="SolTrace" class="footer-logo" />
+            <a href="#" class="x-link" id="soltraceTwitter" target="_blank">
+              <i class="fa-brands fa-x-twitter"></i>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="accordion half-width">
+        <button class="accordion-btn">
+          Feedback <span class="arrow">▼</span>
+        </button>
+        <div class="accordion-content hidden">
+          <input
+            type="text"
+            class="feedback-input"
+            id="feedbackFirstName"
+            placeholder="First name"
+          />
+          <input
+            type="text"
+            class="feedback-input"
+            id="feedbackLastName"
+            placeholder="Last name"
+          />
+          <textarea
+            class="feedback-input"
+            id="feedbackMessage"
+            placeholder="Your message..."
+            rows="4"
+          ></textarea>
+          <button class="feedback-btn" id="feedbackSendBtn">Send</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Built By -->
+    <p class="built-by">Built by Philip</p>
+
+  </footer>
+</div>
+  <!-- Chart.js -->
+  <noscript>
+  <div class="noscript-msg">
+    SolTrace requires JavaScript to run. Please enable JavaScript in your browser.
+  </div>
+</noscript>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="app.js"></script>
+
+</body>
+</html>
