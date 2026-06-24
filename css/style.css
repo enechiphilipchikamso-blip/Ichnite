@@ -31,7 +31,7 @@ html, body {
 
 *, *::before, *::after {
   box-sizing: border-box;
-  -webkit-tap-highlight-color: rgba(124, 92, 252, 0.2);
+  -webkit-tap-highlight-color: rgba(124, 92, 252, 0.4);
 }
 
 /* Text Selection */
@@ -51,6 +51,7 @@ body {
   color: var(--blue-purple);
   min-height: 100vh;
   padding: 24px 0;
+  font-size: clamp(1rem, 2.5vw, 1.25rem);
 }
 
 /* ── Main Wrapper ── */
@@ -67,13 +68,13 @@ header {
 }
 
 h1 {
-  font-size: 2.4rem;
+  font-size: clamp(2rem, 5vw, 4rem);
   color: var(--blue);
   letter-spacing: 2px;
 }
 
 .subtitle {
-  font-size: 0.95rem;
+  font-size: clamp(0.875rem, 2vw, 1rem);
   color: var(--blue-purple);
   margin-top: 6px;
 }
@@ -162,6 +163,25 @@ main {
   outline: none;
 }
 
+#searchBtn.loading {
+  background-color: var(--blue-soft);
+  cursor: not-allowed;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.85;
+}
+
+#searchBtn .btn-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: var(--white);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
 #searchBtn:active {
   background-color: var(--blue-soft);
 }
@@ -229,14 +249,14 @@ main {
 /* ── H2 ── */
 h2 {
   color: var(--blue-soft);
-  font-size: 1.15rem;
+  font-size: clamp(1.1rem, 3vw, 1.5rem);
   margin-bottom: 14px;
 }
 
 /* ── H3 ── */
 h3 {
   color: var(--blue-soft);
-  font-size: 1rem;
+  font-size: clamp(1rem, 2.5vw, 1.25rem);
   margin-top: 20px;
   margin-bottom: 10px;
 }
@@ -244,7 +264,7 @@ h3 {
 /* ── Paragraphs ── */
 p {
   color: var(--blue-purple);
-  font-size: 0.95rem;
+  font-size: clamp(0.875rem, 0.5rem + 1.5vw, 1.125rem);
   line-height: 1.6;
 }
 
@@ -358,10 +378,11 @@ canvas#pieChart {
 /* ── NFT Grid ── */
 #nftGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+ grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
   gap: 10px;
   margin-top: 14px;
   width: 100%;
+  min-width: 0;
 }
 
 .nft-card {
@@ -405,10 +426,11 @@ canvas#pieChart {
 /* ── NFT Skeleton Grid ── */
 .nft-skeleton-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+grid-template-columns: repeat(4, 1fr);
   gap: 10px;
   margin-top: 14px;
   width: 100%;
+  min-width: 0;
 }
 
 /* ── Chart Toggles ── */
@@ -610,32 +632,6 @@ canvas#pieChart {
   font-size: 0.95rem;
 }
 
-/* ── Footer ── */
-footer {
-  width: 100%;
-  margin: 32px auto 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-bottom: 32px;
-}
-
-/* ── Footer Row — Side by Side ── */
-.footer-row {
-  display: flex;
-  gap: 12px;
-  width: 100%;
-}
-
-.half-width {
-  flex: 1;
-  min-width: 0;
-}
-
-.full-width {
-  width: 100%;
-}
-
 /* ── Accordion Button ── */
 .accordion-btn {
   width: 100%;
@@ -699,8 +695,12 @@ footer {
   font-size: 0.95rem;
 }
 
-.text{
+.faq-b {
+  color: var(--solscan-text);
+  font-size: 0.9rem;
   line-height: 1.6;
+  margin: 0;
+
 }
 
 .faq-a {
@@ -709,23 +709,6 @@ footer {
   line-height: 1.6;
 }
 
-/* ── Social Row ── */
-.social-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.social-label {
-  color: var(--blue);
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.footer-logo {
-  width: 3.6rem;
-  height: 3.6rem;
-}
 /* ── X Icon ── */
 .x-link {
   color: #4a4a4a;
@@ -739,55 +722,6 @@ footer {
 
 .x-link:active {
   opacity: 0.7;
-}
-
-/* ── Feedback Form ── */
-.feedback-input {
-  width: 100%;
-  background-color: var(--card-bg);
-  border: 1.5px solid var(--blue-purple);
-  border-radius: 12px;
-  padding: 10px 14px;
-  color: var(--white);
-  font-size: 0.9rem;
-  font-family: 'Space Grotesk', sans-serif;
-  outline: none;
-  transition: border 0.3s;
-  resize: none;
-}
-
-.feedback-input::placeholder {
-  color: var(--blue-purple-faded);
-}
-
-.feedback-input:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
-}
-
-.feedback-btn {
-  background-color: var(--blue);
-  color: var(--white);
-  border: none;
-  border-radius: 50px;
-  padding: 10px 24px;
-  font-size: 0.95rem;
-  cursor: pointer;
-  transition: background 0.3s;
-  outline: none;
-  align-self: flex-end;
-}
-
-.feedback-btn:active {
-  background-color: var(--blue-soft);
-}
-
-/* ── Built By ── */
-.built-by {
-  text-align: center;
-  color: var(--blue-purple-faded);
-  font-size: 0.8rem;
-  margin-top: 8px;
 }
 
 /* ── Small Tablet and Large Phone ── */
@@ -806,10 +740,6 @@ footer {
 
   .chart-scroll-wrapper canvas {
     min-width: 100%;
-  }
-
-  #nftGrid {
-    grid-template-columns: repeat(4, 1fr);
   }
 
   .nft-skeleton-grid {
@@ -835,12 +765,8 @@ footer {
     min-width: 100%;
   }
 
-  #nftGrid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-
   .nft-skeleton-grid {
-    grid-template-columns: repeat(4, 1fr);
+grid-template-columns: repeat(4, 1fr);
   }
 
   .skeleton-bar-chart {
@@ -873,16 +799,469 @@ footer {
     height: 300px;
   }
 
-  #nftGrid {
-    grid-template-columns: repeat(5, 1fr);
-  }
-
   .nft-skeleton-grid {
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(4, 1fr);
   }
 
   .skeleton-pie-chart {
     width: 260px;
     height: 260px;
   }
+}
+
+/* ── Total Net Worth ── */
+.total-net-worth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background-color: var(--card-bg);
+  border-radius: 20px;
+  padding: 20px;
+  width: 100%;
+  margin-bottom: 20px;
+  gap: 6px;
+}
+
+.net-worth-skeleton-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.net-worth-skeleton-wrapper .skeleton-line {
+  width: 70%;
+}
+
+.net-worth-skeleton-wrapper .skeleton-line.short {
+  width: 30%;
+}
+
+.net-worth-label {
+  color: var(--blue-purple);
+  font-size: clamp(0.875rem, 2vw, 1rem);
+  font-weight: 600;
+}
+
+.net-worth-value {
+  color: var(--white);
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+  font-weight: 700;
+}
+
+/* ── Clear Button ── */
+.clear-btn {
+  background: transparent;
+  border: 1.5px solid var(--blue-purple);
+  color: var(--blue-purple);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.3s, color 0.3s;
+  outline: none;
+}
+
+.clear-btn:active {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+/* ── Wallet Display — Truncated Address ── */
+.wallet-display {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.truncated-address {
+  color: var(--blue-purple);
+  font-size: clamp(0.8rem, 2vw, 0.95rem);
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+/* ── Copy Address Button ── */
+.copy-address-btn {
+  background: transparent;
+  border: 1.5px solid var(--blue-purple);
+  color: var(--blue-purple);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: color 0.3s, border-color 0.3s;
+  outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copy-address-btn i {
+  font-size: 1rem;
+  pointer-events: none;
+}
+
+.copy-address-btn.copied i {
+  font-size: 1rem;
+}
+
+.copy-address-btn:active {
+  color: var(--success);
+  border-color: var(--blue-soft);
+}
+
+.copy-address-btn.copied {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* ── Share Wallet Button ── */
+.share-wallet-btn {
+  background-color: var(--blue-purple);
+  color: var(--white);
+  border: none;
+  border-radius: 50px;
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: opacity 0.3s;
+  outline: none;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.share-wallet-btn:active {
+  opacity: 0.7;
+}
+
+/* ── Search History ── */
+.search-history {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 100%;
+  max-width: 600px;
+}
+
+.history-label {
+  color: var(--blue-purple-faded);
+  font-size: 0.8rem;
+}
+
+.history-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.history-chip {
+  background-color: var(--card-bg);
+  color: var(--blue-purple);
+  border: 1.5px solid var(--blue-purple);
+  border-radius: 50px;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.2s;
+  outline: none;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.history-chip:active {
+  background-color: var(--blue-purple);
+  color: var(--white);
+}
+
+/* ── Token Controls Row ── */
+.token-controls-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+/* ── Token Search Input ── */
+.token-search-input {
+  flex: 1;
+  background-color: var(--input-bg);
+  border: 1.5px solid var(--blue-purple);
+  border-radius: 50px;
+  padding: 8px 14px;
+  color: var(--white);
+  font-size: 0.875rem;
+  font-family: 'Space Grotesk', sans-serif;
+  outline: none;
+  transition: border 0.3s;
+  min-width: 0;
+}
+
+.token-search-input::placeholder {
+  color: var(--blue-purple-faded);
+}
+
+.token-search-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+}
+
+/* ── Token Sort Dropdown ── */
+
+.select-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.token-sort-select {
+  padding-right: 2.5rem
+}
+
+.token-sort-select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-color: var(--input-bg);
+  border: 1.5px solid var(--blue-purple);
+  border-radius: 50px;
+  padding: 8px 14px;
+  color: var(--blue-purple);
+  font-size: 0.875rem;
+  font-family: 'Space Grotesk', sans-serif;
+  outline: none;
+  cursor: pointer;
+  transition: border 0.3s;
+  flex-shrink: 0;
+}
+
+.select-wrapper::after {
+  content: "▼";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%) rotate(360deg);
+  color: var(--blue-purple);
+  pointer-events: none;
+  font-size: 12px;
+}
+
+.select-wrapper.open::after {
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.token-sort-select:focus {
+  border-color: var(--blue);
+}
+
+/* ── Token Total Value ── */
+.token-total-value {
+  color: var(--white);
+  font-size: clamp(0.9rem, 2vw, 1rem);
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+/* ── NFT Count Badge ── */
+.nft-count-badge {
+  background-color: var(--blue-purple);
+  color: var(--white);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 50px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* ── Wallet Age ── */
+.wallet-age {
+  color: var(--blue-purple-faded);
+  font-size: clamp(0.8rem, 2vw, 0.875rem);
+  margin-top: 8px;
+}
+
+/* ── Back To Top Button ── */
+.back-to-top {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--blue-purple);
+  color: var(--white);
+  border: none;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(124, 92, 252, 0.4);
+  transition: opacity 0.3s, transform 0.3s;
+  outline: none;
+  z-index: 999;
+}
+
+.back-to-top:active {
+  transform: translateX(-50%) scale(0.9);
+}
+
+/* ── Footer Bottom ── */
+.footer-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  background-color: transparent;
+  border-radius: 20px;
+  padding: 20px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+/* ── Footer Brand Row ── */
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── Footer Logo ── */
+.footer-logo {
+  width: 2.6rem;
+  height: 2.6rem;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+/* ── Footer Copyright ── */
+.footer-copyright {
+  color: var(--blue-purple-faded);
+  font-size: clamp(0.75rem, 1.5vw, 0.875rem);
+  text-align: center;
+}
+
+/* ── Empty Search Message ── */
+.empty-msg-search {
+  color: var(--error);
+  font-size: clamp(0.875rem, 2vw, 0.95rem);
+  margin-top: 10px;
+  text-align: center;
+}
+
+/* ── Smooth Card Reveal Animation ── */
+.card-reveal {
+  animation: revealCard 0.4s ease forwards;
+}
+
+@keyframes revealCard {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Copy Transaction Signature ── */
+.copy-sig-btn {
+  background: transparent;
+  border: none;
+  color: var(--blue-purple-faded);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.2s;
+  outline: none;
+  flex-shrink: 0;
+}
+
+.copy-sig-btn:active {
+  color: var(--blue-soft);
+}
+
+.copy-sig-btn.copied {
+  color: var(--success);
+}
+
+/* ── Transaction Type Icons ── */
+.tx-icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.tx-icon.receive {
+  color: var(--gain);
+}
+
+.tx-icon.send {
+  color: var(--loss);
+}
+
+.tx-icon.swap {
+  color: var(--blue-purple);
+}
+
+/* ── Transaction Row ── */
+.tx-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+}
+
+.tx-row:last-child {
+  border-bottom: none;
+}
+
+.tx-text {
+  flex: 1;
+  color: var(--blue-purple);
+  font-size: clamp(0.8rem, 2vw, 0.9rem);
+  line-height: 1.5;
+}
+
+.tx-date-group {
+  color: var(--blue-soft);
+  font-size: clamp(0.75rem, 1.5vw, 0.85rem);
+  font-weight: 600;
+  margin-top: 14px;
+  margin-bottom: 6px;
+}
+
+/* ── NFT Collection Group ── */
+.nft-collection-title {
+  color: var(--blue);
+  font-size: clamp(0.875rem, 2vw, 0.95rem);
+  font-weight: 600;
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.nft-collection-item {
+  color: var(--blue-purple);
+  font-size: clamp(0.8rem, 2vw, 0.875rem);
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--blue-purple-faded);
+  margin-bottom: 4px;
 }

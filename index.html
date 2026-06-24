@@ -8,38 +8,17 @@
   <meta property="og:title" content="SolTrace" />
   <meta property="og:description" content="Check any Solana wallet instantly." />
   <meta property="og:type" content="website" />
+  <meta property="og:image" content="logo.png" />
+<meta property="og:image:alt" content="SolTrace — Solana Wallet Checker" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <link rel="icon" type="image/png" href="logo.png" />
+  <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: light)">
+ <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="css/style.css" />
   <title>SolTrace</title>
 </head>
-
-<script>
-  window.addEventListener('DOMContentLoaded', () => {
-    const logo = document.getElementById('solLogo');
-    const hostedBackup = 'https://example.com'; // <-- Put your live website link here
-    
-    if (logo) {
-      const localPath = logo.getAttribute('data-src');
-      
-      // 1. Create an invisible "test" image in memory
-      const testImg = new Image(); 
-      
-      // 2. Tell the test image what to do if the local file works
-      testImg.onload = function() {
-        logo.src = localPath; // Local file is good! Show it on the page.
-      };
-      
-      // 3. Tell the test image what to do if the local file is broken
-      testImg.onerror = function() {
-        logo.src = hostedBackup; // Local file is broken! Load the website link instead.
-      };
-      
-      // 4. Start the background test
-      testImg.src = localPath; 
-    }
-  });
-</script>
 
 <body>
 
@@ -59,13 +38,36 @@
         id="walletInput"
         placeholder="Paste Solana wallet address..."
       />
-      <button id="searchBtn">Trace</button>
-    </div>
+<button id="clearBtn" class="clear-btn hidden">✕</button>
+<button id="searchBtn">Trace</button>
+</div>
     <p id="errorMsg" class="error hidden">Invalid Solana address. Please try again.</p>
+    <p id="networkErrorMsg" class="network-error hidden">Solana network is experiencing delays. Please try again shortly.</p>
+    <p id="emptySearchMsg" class="empty-msg-search  hidden">Please paste a Solana wallet address.</p>
+    <div id="walletDisplay" class="wallet-display hidden">
+  <span id="truncatedAddress" class="truncated-address"></span>
+<button id="copyAddressBtn" class="copy-address-btn">
+  <i class="fa-regular fa-copy"></i>
+</button>
+  <button id="shareWalletBtn" class="share-wallet-btn">Share</button>
+</div>
+<div id="searchHistory" class="search-history hidden">
+  <div id="historyChips" class="history-chips"></div>
+</div>
   </main>
 
   <!-- Results Section -->
   <section id="results" class="hidden">
+<div id="totalNetWorth" class="total-net-worth hidden">
+  <!-- Skeleton -->
+  <div id="netWorthSkeleton" class="net-worth-skeleton-wrapper">
+    <div class="skeleton skeleton-line short"></div>
+    <div class="skeleton skeleton-line"></div>
+  </div>
+  <!-- Real Content -->
+  <span class="net-worth-label hidden">Total Net Worth</span>
+  <span id="netWorthValue" class="net-worth-value hidden"></span>
+</div>
 
     <!-- Card 1 — SOL Balance -->
  <div class="card">
@@ -95,11 +97,28 @@
     <span id="solBalance" class="sol-balance-amount"></span>
     <span id="solBalanceUsd" class="sol-balance-usd"></span>
   </div>
+  <p id="walletAge" class="wallet-age hidden"></p>
 </div>
 
     <!-- Card 2 — Token Holdings -->
     <div class="card">
       <h2>Token Holdings</h2>
+<p id="tokenTotalValue" class="token-total-value hidden"></p>
+  <div class="token-controls-row">
+    <input
+      type="text"
+      id="tokenSearch"
+      class="token-search-input"
+      placeholder=" Search tokens..."
+    />
+    <div class="select-wrapper">
+    <select id="tokenSort" class="token-sort-select">
+      <option value="value">Sort by Value</option>
+      <option value="amount">Sort by Amount</option>
+      <option value="name">Sort by Name</option>
+    </select>
+    </div>
+  </div>
       <!-- Skeleton -->
 <div id="tokenSkeleton">
   <div class="skeleton skeleton-token-row"></div>
@@ -117,12 +136,12 @@
 <div id="pieSpinner" class="spinner hidden"></div>
 
 <!-- Real Pie Chart -->
-<canvas id="pieChart" class="hidden"></canvas>
+<canvas id="pieChart" role="img" aria-label="Token holdings pie chart" class="hidden"></canvas>
 </div>
 
     <!-- Card 3 — NFTs -->
     <div class="card">
-      <h2>NFTs</h2>
+<h2>NFTs <span id="nftCountBadge" class="nft-count-badge hidden"></span></h2>
       <!-- Skeleton -->
 <div id="nftSkeleton">
   <div class="skeleton skeleton-line"></div>
@@ -169,7 +188,7 @@
   <div id="barSpinner" class="spinner hidden"></div>
 
   <!-- Real Chart -->
-  <canvas id="barChart" class="hidden"></canvas>
+<canvas id="barChart" role="img" aria-label="Wallet activity bar chart" class="hidden"></canvas>
 </div>
 
       <!-- Recent Transactions -->
@@ -202,96 +221,61 @@
   </section>
 
   <!-- Footer -->
-  <footer>
+<footer>
 
-    <!-- Disclaimer — Full Width -->
-    <div class="accordion full-width">
-      <button class="accordion-btn">
-        Disclaimer <span class="arrow">▼</span>
-      </button>
-      <div class="accordion-content hidden">
-        <p class="text" class="faq-a">SolTrace is a read-only tool. We do not store, collect or save any wallet data.<br> All data displayed is publicly available on the Solana blockchain.<br> SolTrace is not a financial advisor. Nothing on this platform should be considered financial advice.
-        </p>
+  <!-- Disclaimer — Full Width -->
+  <div class="accordion full-width">
+    <button class="accordion-btn">
+      Disclaimer <span class="arrow">▼</span>
+    </button>
+    <div class="accordion-content hidden">
+      <p class="faq-b">SolTrace is a read-only tool. We do not store, collect or save any wallet data.</p>
+      <p class="faq-b">All data displayed is publicly available on the Solana blockchain.</p>
+      <p class="faq-b">SolTrace is not a financial advisor. Nothing on this platform should be considered financial advice.</p>
+    </div>
+  </div>
+
+  <!-- FAQ — Full Width -->
+  <div class="accordion full-width">
+    <button class="accordion-btn">
+      FAQ <span class="arrow">▼</span>
+    </button>
+    <div class="accordion-content hidden">
+      <div class="faq-item">
+        <p class="faq-q">What is SolTrace?</p>
+        <p class="faq-a">SolTrace is a Solana wallet checker. Paste any Solana wallet address and instantly view SOL balance, token holdings, NFTs and transaction history.</p>
+      </div>
+      <div class="faq-item">
+        <p class="faq-q">Is my wallet safe?</p>
+        <p class="faq-a">Yes. SolTrace is read-only. We never ask for your private key or seed phrase. We cannot access, move or modify your funds in any way.</p>
+      </div>
+      <div class="faq-item">
+        <p class="faq-q">Why is my balance not showing?</p>
+        <p class="faq-a">Make sure you have pasted a valid Solana wallet address. If the problem continues the Solana network may be experiencing delays. Try again shortly.</p>
+      </div>
+      <div class="faq-item">
+        <p class="faq-q">What wallets does SolTrace support?</p>
+        <p class="faq-a">SolTrace supports any valid Solana wallet address. Simply paste your address and SolTrace will do the rest.</p>
       </div>
     </div>
+  </div>
 
-    <!-- FAQ — Full Width -->
-    <div class="accordion full-width">
-      <button class="accordion-btn">
-        FAQ <span class="arrow">▼</span>
-      </button>
-      <div class="accordion-content hidden">
-        <div class="faq-item">
-          <p class="faq-q">What is SolTrace?</p>
-          <p class="faq-a">SolTrace is a Solana wallet checker. Paste any Solana wallet address and instantly view SOL balance, token holdings, NFTs and transaction history.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q">Is my wallet safe?</p>
-          <p class="faq-a">Yes, SolTrace is read-only. We never ask for your private key or seed phrase. We cannot access, move or modify your funds in any way.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q">Why is my balance not showing?</p>
-          <p class="faq-a">Make sure you have pasted a valid Solana wallet address. If the problem continues the Solana network may be experiencing delays. Try again shortly.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q">What wallets does SolTrace support?</p>
-          <p class="faq-a">SolTrace supports any valid Solana wallet address. Simply paste your address and SolTrace will do the rest.</p>
-        </div>
-      </div>
+  <!-- Footer Bottom -->
+  <div class="footer-bottom">
+    <div class="footer-brand">
+      <img src="images/logo.png" alt="SolTrace" class="footer-logo" />
+      <p class="footer-copyright">© 2026 SolTrace. All Rights Reserved </p>
     </div>
+    <a href="#"
+       class="x-link"
+       id="soltraceTwitter"
+       target="_blank"
+       rel="noopener noreferrer">
+      <i class="fa-brands fa-x-twitter"></i>
+    </a>
+  </div>
 
-    <!-- Social Links and Feedback — Side by Side -->
-    <div class="footer-row">
-
-      <!-- Social Links -->
-      <div class="accordion half-width">
-        <button class="accordion-btn">
-          Social Links <span class="arrow">▼</span>
-        </button>
-        <div class="accordion-content hidden">
-          <div class="social-row">
-            <img src="images/logo.png" alt="SolTrace" class="footer-logo" />
-            <a href="#" class="x-link" id="soltraceTwitter" target="_blank">
-              <i class="fa-brands fa-x-twitter"></i>
-            </a>
-          </div>
-        </div>
-      </div>
-
-      <!-- Feedback -->
-      <div class="accordion half-width">
-        <button class="accordion-btn">
-          Feedback <span class="arrow">▼</span>
-        </button>
-        <div class="accordion-content hidden">
-          <input
-            type="text"
-            class="feedback-input"
-            id="feedbackFirstName"
-            placeholder="First name"
-          />
-          <input
-            type="text"
-            class="feedback-input"
-            id="feedbackLastName"
-            placeholder="Last name"
-          />
-          <textarea
-            class="feedback-input"
-            id="feedbackMessage"
-            placeholder="Your message..."
-            rows="4"
-          ></textarea>
-          <button class="feedback-btn" id="feedbackSendBtn">Send</button>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- Built By -->
-    <p class="built-by">Built by Philip</p>
-
-  </footer>
+</footer>
 </div>
   <!-- Chart.js -->
   <noscript>
@@ -299,8 +283,54 @@
     SolTrace requires JavaScript to run. Please enable JavaScript in your browser.
   </div>
 </noscript>
+<!--
+<button id="backToTopBtn" class="back-to-top hidden">↑</button>
+ -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
+  
+<script>
+  window.addEventListener('DOMContentLoaded', () => {
+    const logo = document.getElementById('solLogo');
+    const hostedBackup = 'https://example.com'; // <-- Put your live website link here
+    
+    if (logo) {
+      const localPath = logo.getAttribute('data-src');
+      
+      // 1. Create an invisible "test" image in memory
+      const testImg = new Image(); 
+      
+      // 2. Tell the test image what to do if the local file works
+      testImg.onload = function() {
+        logo.src = localPath; // Local file is good! Show it on the page.
+      };
+      
+      // 3. Tell the test image what to do if the local file is broken
+      testImg.onerror = function() {
+        logo.src = hostedBackup; // Local file is broken! Load the website link instead.
+      };
+      
+      // 4. Start the background test
+      testImg.src = localPath; 
+    }
+  });
+  
+document.addEventListener('DOMContentLoaded', () => {
+  const select = document.querySelector('.token-sort-select');
+  const wrapper = document.querySelector('.select-wrapper');
 
+  if (!select || !wrapper) return;
+
+  select.addEventListener('focus', () => {
+    wrapper.classList.add('open');
+  });
+
+  select.addEventListener('blur', () => {
+    wrapper.classList.remove('open');
+  });
+});
+  
+</script>  
+  
 </body>
 </html>
