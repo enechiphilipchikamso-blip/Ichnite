@@ -34,6 +34,16 @@ html, body {
   -webkit-tap-highlight-color: rgba(124, 92, 252, 0.2);
 }
 
+/* Text Selection */
+::selection {
+  background: var(--blue);
+  color: black;
+}
+::-moz-selection {
+  background: var(--blue);
+  color: black;
+}
+
 /* ── Body ── */
 body {
   background-color: var(--bg);
@@ -80,6 +90,8 @@ main {
 .search-box {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   background-color: var(--card-bg);
   border-radius: 50px;
   padding: 8px 12px;
@@ -137,6 +149,8 @@ main {
 }
 
 #searchBtn {
+  flex-shrink: 0;
+  min-width: fit-content;
   background-color: var(--blue);
   color: var(--white);
   border: none;
@@ -199,6 +213,7 @@ main {
   flex-direction: column;
   gap: 20px;
   width: 100%;
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -207,6 +222,8 @@ main {
   border-radius: 20px;
   padding: 20px;
   width: 100%;
+  min-width: 0;
+  flex: 1;
 }
 
 /* ── H2 ── */
