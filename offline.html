@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: light)">
+  <title>SolTrace — You're Offline</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    /* ── Root Colors ── */
+    :root {
+      --bg: #0a0a0f;
+      --card-bg: #12121a;
+      --blue: #3b82f6;
+      --blue-purple: #7c5cfc;
+      --blue-purple-faded: rgba(124, 92, 252, 0.4);
+      --white: #ffffff;
+      --error: #ff4d4d;
+      --text-muted: #94a3b8;
+      --accent-solana: #14f195;
+    }
+
+    /* ── Body ── */
+    body {
+      background-color: var(--bg);
+      font-family: 'Space Grotesk', sans-serif;
+      color: var(--blue-purple);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+
+    /* ── Offline Card ── */
+    .offline-card {
+      background-color: var(--card-bg);
+      border-radius: 24px;
+      padding: 40px 32px;
+      max-width: 420px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    /* ── Logo ── */
+    .offline-logo {
+      width: 72px;
+      height: 72px;
+      object-fit: contain;
+      border-radius: 16px;
+    }
+
+    /* ── Title ── */
+    .offline-title {
+      color: var(--blue);
+      font-size: clamp(1.3rem, 4vw, 1.8rem);
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    /* ── Message ── */
+    .offline-msg {
+      color: var(--blue-purple);
+      font-size: clamp(0.875rem, 2.5vw, 1rem);
+      line-height: 1.6;
+    }
+
+    /* ── Signal Icon ── */
+    .icon-wrapper {
+      position: relative;
+      width: 5rem;
+      height: 5rem;
+      margin: 0 auto 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .wifi-icon {
+      display: block;
+      width: 4rem;
+      height: 4rem;
+      fill: none;
+      stroke: var(--text-muted);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .slash-line {
+      position: absolute;
+      width: 80px;
+      height: 2px;
+      background-color: var(--blue);
+      transform: rotate(-45deg);
+      box-shadow: 0 0 12px var(--blue);
+    }
+
+    /* ── Retry Button ── */
+    .retry-btn {
+      background-color: var(--blue);
+      color: var(--white);
+      border: none;
+      border-radius: 50px;
+      padding: 12px 32px;
+      font-size: 1rem;
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.3s;
+      outline: none;
+      width: 100%;
+      max-width: 260px;
+    }
+
+    .retry-btn:active {
+      opacity: 0.8;
+    }
+
+    .retry-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    /* ── Footer Text ── */
+    .offline-footer {
+      color: var(--blue-purple-faded);
+      font-size: clamp(0.75rem, 1.5vw, 0.85rem);
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="offline-card">
+
+    <!-- Logo -->
+    <img
+      src="images/logo.png"
+      alt="SolTrace"
+      class="offline-logo"
+      onerror="this.src='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='"
+    />
+
+    <!-- Signal Icon -->
+    <div class="icon-wrapper">
+      <svg class="wifi-icon" viewBox="0 0 24 24">
+        <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+        <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+        <line x1="12" y1="20" x2="12.01" y2="20" stroke-width="3"></line>
+      </svg>
+      <div class="slash-line"></div>
+    </div>
+
+    <!-- Title -->
+    <h1 class="offline-title">You're Offline</h1>
+
+    <!-- Message -->
+    <p class="offline-msg">
+      SolTrace needs an internet connection to check Solana wallets.
+      Please check your connection and try again.
+    </p>
+
+    <!-- Retry Button -->
+    <button
+      type="button"
+      class="retry-btn"
+      onclick="checkConnection()">
+      Retry Connection
+    </button>
+
+    <!-- Footer -->
+    <p class="offline-footer">© 2026 SolTrace. All Rights Reserved</p>
+
+  </div>
+
+  <script>
+    // Manual check when user taps button
+    function checkConnection() {
+      const btn = document.querySelector('.retry-btn');
+
+      if (navigator.onLine) {
+        location.replace('index.html');
+        return;
+      }
+
+      btn.textContent = 'Still Offline...';
+      btn.disabled = true;
+
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = 'Retry Connection';
+      }, 1500);
+    }
+
+    // Auto reload when connection is restored
+    window.addEventListener('online', () => {
+      location.replace('index.html');
+    });
+  </script>
+
+</body>
+</html>
