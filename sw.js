@@ -1,18 +1,20 @@
 // ── SolTrace Service Worker ──
 // IMPORTANT: Change CACHE_VERSION every time you modify any file
 // e.g. v1 → v2 → v3 and so on — this forces the browser to update
-const CACHE_VERSION = 'soltrace-v3';
+const CACHE_VERSION = 'soltrace-v18';
 
 // ── Files to cache for offline use ──
+const BASE_PATH = self.location.pathname.replace(/sw\.js$/, '');
+
 const CACHE_FILES = [
-  '/',
-  '/index.html',
-  '/style.css',
-  '/app.js',
-  '/manifest.json',
-  '/offline.html',
-  '/images/logo.png',
-  '/images/sol-logo.png',
+  `${BASE_PATH}`,
+  `${BASE_PATH}index.html`,
+  `${BASE_PATH}style.css`,
+  `${BASE_PATH}app.js`,
+  `${BASE_PATH}manifest.json`,
+  `${BASE_PATH}offline.html`,
+  `${BASE_PATH}images/logo.png`,
+  `${BASE_PATH}images/sol-logo.png`,
   'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css',
   'https://cdn.jsdelivr.net/npm/chart.js'
@@ -20,17 +22,38 @@ const CACHE_FILES = [
 
 // ── Install Event ──
 // Opens cache and stores all files listed above
+const LOCAL_FILES = [
+  `${BASE_PATH}`,
+  `${BASE_PATH}index.html`,
+  `${BASE_PATH}style.css`,
+  `${BASE_PATH}app.js`,
+  `${BASE_PATH}manifest.json`,
+  `${BASE_PATH}offline.html`,
+ `${BASE_PATH}images/logo.png`,
+`${BASE_PATH}images/sol-logo.png`,
+];
+
+const CDN_FILES = [
+  'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap',
+  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css',
+  'https://cdn.jsdelivr.net/npm/chart.js'
+];
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION)
-      .then((cache) => {
-        return cache.addAll(CACHE_FILES);
-      })
-      .then(() => {
-        // Force new service worker to activate immediately
-        // without waiting for old tabs to close
-        return self.skipWaiting();
-      })
+    caches.open(CACHE_VERSION).then(async (cache) => {
+      // Local files must succeed — critical for offline support
+      await cache.addAll(LOCAL_FILES);
+
+      // CDN files are best-effort — one failing won't break install
+      await Promise.allSettled(
+        CDN_FILES.map((url) => cache.add(new Request(url, { mode: 'cors' })).catch((err) => {
+          console.warn(`CDN cache failed (non-critical): ${url}`, err);
+        }))
+      );
+
+      return self.skipWaiting();
+    })
   );
 });
 
@@ -58,6 +81,33 @@ self.addEventListener('activate', (event) => {
 // ── Fetch Event ──
 // Network first for API calls — Cache first for static files
 self.addEventListener('fetch', (event) => {
+  
+  if (
+  event.request.url.startsWith('https://fonts.googleapis.com') ||
+  event.request.url.startsWith('https://fonts.gstatic.com')
+) {
+  event.respondWith(
+    caches.open('google-fonts-v1').then(async (cache) => {
+      const cached = await cache.match(event.request);
+
+      if (cached) {
+        return cached;
+      }
+
+      const response = await fetch(event.request, {
+      cache: 'no-cache'
+      });
+
+      if (response.ok) {
+        cache.put(event.request, response.clone());
+      }
+
+      return response;
+    })
+  );
+
+  return;
+}
 
   const url = new URL(event.request.url);
 
@@ -104,7 +154,7 @@ self.addEventListener('fetch', (event) => {
           })
           .catch(() => {
           if (event.request.mode === 'navigate') {
-          return caches.match('/offline.html');
+          return caches.match(`${BASE_PATH}offline.html`);
           }
 
            return new Response('', {

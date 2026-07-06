@@ -26,6 +26,8 @@
 </head>
 
 <body>
+  
+    <!-- <div id="floatingLogosContainer" aria-hidden="true"></div> -->
 
   <!-- Header -->
   <header>
@@ -117,11 +119,16 @@
       placeholder=" Search tokens..."
     />
     <div class="select-wrapper">
-    <select id="tokenSort" class="token-sort-select">
-      <option value="value">Sort by Value</option>
-      <option value="amount">Sort by Amount</option>
-      <option value="name">Sort by Name</option>
-    </select>
+    <button
+  type="button"
+  id="tokenSort"
+  class="token-sort-select"
+  data-value="value"
+  aria-haspopup="listbox"
+  aria-expanded="false">
+  <span id="tokenSortLabel">Sort by Value</span>
+  <span class="arrow" id="tokenSortArrow">▼</span>
+</button>
     </div>
   </div>
       <!-- Skeleton -->
@@ -201,7 +208,6 @@
 
 <!-- Skeleton -->
 <div id="txSkeleton">
-  <div class="skeleton skeleton-line"></div>
   <div class="skeleton skeleton-line"></div>
   <div class="skeleton skeleton-line"></div>
   <div class="skeleton skeleton-line"></div>
@@ -293,49 +299,6 @@
  -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
-  
-<script>
-  window.addEventListener('DOMContentLoaded', () => {
-    const logo = document.getElementById('solLogo');
-    const hostedBackup = 'https://example.com'; // <-- Put your live website link here
-    
-    if (logo) {
-      const localPath = logo.getAttribute('data-src');
-      
-      // 1. Create an invisible "test" image in memory
-      const testImg = new Image(); 
-      
-      // 2. Tell the test image what to do if the local file works
-      testImg.onload = function() {
-        logo.src = localPath; // Local file is good! Show it on the page.
-      };
-      
-      // 3. Tell the test image what to do if the local file is broken
-      testImg.onerror = function() {
-        logo.src = hostedBackup; // Local file is broken! Load the website link instead.
-      };
-      
-      // 4. Start the background test
-      testImg.src = localPath; 
-    }
-  });
-  
-document.addEventListener('DOMContentLoaded', () => {
-  const select = document.querySelector('.token-sort-select');
-  const wrapper = document.querySelector('.select-wrapper');
-
-  if (!select || !wrapper) return;
-
-  select.addEventListener('focus', () => {
-    wrapper.classList.add('open');
-  });
-
-  select.addEventListener('blur', () => {
-    wrapper.classList.remove('open');
-  });
-});
-  
-</script>  
   
 </body>
 </html>
