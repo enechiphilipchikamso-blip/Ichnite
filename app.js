@@ -449,9 +449,10 @@ function showRemoveConfirm(addressToRemove) {
 
 function showAllSkeletons() {
   show(resultsSection);
+  document.getElementById('netWorthError')?.remove();
   show(totalNetWorth);
   show(netWorthSkeleton);
-  hide(netWorthLabel);
+  show(netWorthLabel);
   hide(netWorthValue);
   show(solSkeleton);
   hide(solPriceRow);
@@ -1506,14 +1507,16 @@ yearOptions.forEach(option => {
 // ════════════════════════════════════════
 
 function updateNetWorth() {
+  document.getElementById('netWorthError')?.remove();
+
   if (solFetchFailed && tokenFetchFailed) {
     hide(netWorthSkeleton);
-    hide(netWorthLabel);
+    hide(netWorthValue);
     const msg = document.createElement('p');
+    msg.id = 'netWorthError';
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to calculate';
-    totalNetWorth.replaceChildren(msg);
-    show(msg);
+    totalNetWorth.appendChild(msg);
     return;
   }
   
