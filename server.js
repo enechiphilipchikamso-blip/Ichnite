@@ -38,7 +38,7 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 // In production — allow only your Vercel domain
 const allowedOrigins =
   NODE_ENV === 'development'
-    ? ['http://localhost:3000', 'http://127.0.0.1:3000']
+    ? ['http://localhost:3000', 'http://127.0.0.1:3000', new RegExp(`^https://${process.env.CODESPACE_NAME}-\\d+\\.app\\.github\\.dev$`)]
     : ['https://soltrace.vercel.app'];
 
 // ── Security Middleware — applied before all routes ──
