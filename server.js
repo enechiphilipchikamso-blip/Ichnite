@@ -47,22 +47,47 @@ const allowedOrigins =
 app.use(helmet());
 
 // 2. CORS — only allow requests from SolTrace frontend
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin in development (e.g. curl, Postman)
-      if (NODE_ENV === 'development' && !origin) {
-        return callback(null, true);
-      }
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error('Not allowed by CORS'));
-    },
-    methods: ['GET'],
-    allowedHeaders: ['Content-Type'],
-  })
-);
+const corsOptions = {  
+  origin: function (origin, callback) {  
+    // Allow requests with no Origin (Postman, curl, server-to-server)  
+    if (!origin) {  
+      console.log('✅ Allowing request with no Origin header');  
+      return callback(null, true);  
+    }  
+      console.log('Origin:', origin);
+  
+    // Allow this Codespace frontend  
+    const codespaceName = process.env.CODESPACE_NAME;  
+    if (codespaceName) {  
+      const codespaceRegex = new RegExp(  
+        `^https://${codespaceName}-\\d+\\.app\\.github\\.dev$`  
+      );  
+  
+      if (codespaceRegex.test(origin)) {  
+        console.log(`✅ Allowed Codespaces origin: ${origin}`);  
+        return callback(null, true);  
+      }  
+    }  
+        
+      //AllowedOrigins   
+     if (allowedOrigins.includes(origin)) {  
+  return callback(null, true);  
+    }  
+  
+    // Allow localhost during development  
+    if (origin.startsWith('http://localhost')) {  
+      console.log(`✅ Allowed localhost origin: ${origin}`);  
+      return callback(null, true);  
+    }  
+  
+    console.error(`❌ Blocked CORS request from origin: ${origin}`);  
+    return callback(new Error('Not allowed by CORS'));  
+  },  
+  methods: ['GET'],  
+  allowedHeaders: ['Content-Type'],  
+};  
+  
+app.use(cors(corsOptions));  
 
 // 3. Rate limiting — prevent API abuse
 // 100 requests per 15 minutes per IP

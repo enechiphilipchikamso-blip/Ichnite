@@ -104,10 +104,14 @@ const TOKEN_COLORS = Object.freeze({
 // ── 4. API BASE URL ──
 // ════════════════════════════════════════
 
-const API_BASE = window.location.hostname === 'localhost' ||
-  window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:3000'
-  : '';
+const hostname = window.location.hostname;
+
+const API_BASE =
+  hostname === 'localhost' || hostname === '127.0.0.1'
+    ? 'http://localhost:3000'
+    : hostname.endsWith('.app.github.dev')
+      ? `https://${hostname.replace(/-\d+\.app\.github\.dev$/, '-3000.app.github.dev')}`
+      : '';
 
 // ════════════════════════════════════════
 // ── 5. STATE VARIABLES ──
