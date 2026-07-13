@@ -30,6 +30,9 @@ requiredEnvVars.forEach((key) => {
 
 // ── Express App ──
 const app = express();
+// Trust first proxy hop (Vercel/StackBlitz) so express-rate-limit
+// can correctly resolve real client IPs from X-Forwarded-For
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
@@ -211,20 +214,39 @@ app.get('/api/tokens', async (req, res) => {
   }
 
   try {
-    let data;
+    let mappedTokens;
 
     if (HELIUS_API_KEY) {
-      // Primary — Helius API
-      data = await safeFetch(
-        `https://api.helius.xyz/v0/addresses/${address.trim()}/balances?api-key=${HELIUS_API_KEY}`
+      // Primary — Helius getTokenAccounts RPC method (verified current endpoint)
+      const data = await safeFetch(
+        `https://beta.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'getTokenAccounts',
+            params: { owner: address.trim() },
+          }),
+        }
       );
 
-      res.json({
-        tokens: data.tokens || [],
-      });
+      const accounts = data.result?.token_accounts || [];
+      mappedTokens = accounts
+        .filter((t) => t.amount > 0)
+        .map((t) => ({
+          mint: t.mint,
+          amount: t.amount,
+          symbol: t.mint.slice(0, 4) + '...' + t.mint.slice(-4),
+          name: null,
+          logoURI: null,
+        }));
+
+      res.json({ tokens: mappedTokens });
     } else if (SHYFT_API_KEY) {
       // Backup — Shyft API
-      data = await safeFetch(
+      const data = await safeFetch(
         `https://api.shyft.to/sol/v1/wallet/all_tokens?network=mainnet-beta&wallet=${address.trim()}`,
         {
           headers: { 'x-api-key': SHYFT_API_KEY },
@@ -322,7 +344,7 @@ app.get('/api/transactions', async (req, res) => {
     if (HELIUS_API_KEY) {
       // Primary — Helius Enhanced Transactions API
       data = await safeFetch(
-        `https://api.helius.xyz/v0/addresses/${address.trim()}/transactions?api-key=${HELIUS_API_KEY}&limit=100`
+        `https://api-mainnet.helius-rpc.com/v0/addresses/${address.trim()}/transactions?api-key=${HELIUS_API_KEY}&limit=100`
       );
 
       res.json({

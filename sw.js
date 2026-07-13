@@ -1,7 +1,7 @@
 // ── SolTrace Service Worker ──
 // IMPORTANT: Change CACHE_VERSION every time you modify any file
 // e.g. v1 → v2 → v3 and so on — this forces the browser to update
-const CACHE_VERSION = 'soltrace-v18';
+const CACHE_VERSION = 'soltrace-v26';
 
 // ── Files to cache for offline use ──
 const BASE_PATH = self.location.pathname.replace(/sw\.js$/, '');
@@ -152,16 +152,22 @@ self.addEventListener('fetch', (event) => {
             }
             return networkResponse;
           })
-          .catch(() => {
-          if (event.request.mode === 'navigate') {
-          return caches.match(`${BASE_PATH}offline.html`);
-          }
+          .catch((err) => {
+  console.log('Fetch failed, mode:', event.request.mode, err);
+    if (event.request.mode === 'navigate') {
+    console.log('Trying to serve offline.html');
+    return caches.match(`${BASE_PATH}offline.html`).then(resp => {
+    console.log('offline.html found in cache?', !!resp);
 
-           return new Response('', {
-           status: 404,
-           statusText: 'Offline'
-          });
-      });
+      if (!resp) {
+    console.error('offline.html is missing from the cache.');
+      }
+
+      return resp;
+    });
+  }
+  return new Response('', { status: 404, statusText: 'Offline' });
+});
      })
   );
 });

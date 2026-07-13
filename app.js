@@ -135,6 +135,9 @@ let solFetchFailed = false;
 let tokenFetchFailed = false;
 let barDataAvailable = false;
 let tokenDataAvailable = false;
+let netWorthRevealed = false;
+let inputValidTimeout = null;
+let failedFetchCount = 0;
 
 
 // Improvement 1: AbortController — cancel stale requests
@@ -342,6 +345,9 @@ function showError(type, customMessage) {
   } else if (type === 'notfound') {
     networkErrorMsg.textContent = 'Wallet data not found.';
     show(networkErrorMsg);
+  } else if (type === 'solana-delay') {
+    networkErrorMsg.textContent = 'Solana network is experiencing delays. Please try again shortly.';
+    show(networkErrorMsg);
   } else if (customMessage) {
     networkErrorMsg.textContent = customMessage;
     show(networkErrorMsg);
@@ -351,11 +357,11 @@ function showError(type, customMessage) {
 // Improvement 10: Parse response status to show correct error
 async function handleResponse(response) {
   if (response.ok) return response.json();
-  if (!navigator.onLine) throw { type: 'offline' };
   if (response.status === 429) throw { type: 'ratelimit' };
   if (response.status === 404) throw { type: 'notfound' };
-  if (response.status >= 500) throw { type: 'server' };
-  throw { type: 'server' };
+  // A response arriving at all means our own server responded —
+  // any failure past this point is an upstream Solana/Helius issue
+  throw { type: 'solana-delay' };
 }
 
 function resetInputState() {
@@ -472,6 +478,7 @@ function showAllSkeletons() {
   hide(nftList);
   hide(nftGrid);
   hide(nftCountBadge);
+  barChart.closest('.chart-scroll-wrapper')?.classList.add('chart-reserved');
   show(barSkeleton);
   hide(barSpinner);
   hide(barChart);
@@ -510,6 +517,7 @@ function resetAll() {
     currentAbortController.abort();
     currentAbortController = null;
   }
+  clearTimeout(inputValidTimeout);
   walletInput.value = '';
   resetInputState();
   currentWalletAddress = '';
@@ -547,8 +555,11 @@ walletInput.addEventListener('input', () => {
   if (walletInput.value.length > CONFIG.MAX_ADDRESS_LENGTH) {
     walletInput.value = walletInput.value.slice(0, CONFIG.MAX_ADDRESS_LENGTH);
   }
+  clearTimeout(inputValidTimeout);
   resetInputState();
-  hideAllMessages();
+  if (navigator.onLine) {
+    hideAllMessages();
+  }
 });
 
 // ════════════════════════════════════════
@@ -556,6 +567,11 @@ walletInput.addEventListener('input', () => {
 // ════════════════════════════════════════
 
 async function handleSearch() {
+  if (!navigator.onLine) {
+    showError('offline');
+    return;
+  }
+
   const rawAddress = walletInput.value.trim();
 
   if (!rawAddress) {
@@ -590,12 +606,17 @@ async function handleSearch() {
   walletInput.classList.add('input-valid');
   walletInput.classList.remove('input-error');
   hideAllMessages();
+
+  clearTimeout(inputValidTimeout);
+  inputValidTimeout = setTimeout(() => {
+    walletInput.classList.remove('input-valid');
+  }, 3000);
   setSearchLoading(true);
   showAllSkeletons();
   
   /* hideFloatingLogos(); */
   
-  resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
   document.title = 'SolTrace — Wallet Results';
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
@@ -610,6 +631,10 @@ async function handleSearch() {
   try {
     solFetchFailed = false;
     tokenFetchFailed = false;
+    barDataAvailable = false;
+    tokenDataAvailable = false;
+    netWorthRevealed = false;
+    failedFetchCount = 0;
     
   const results = await Promise.allSettled([
     fetchSolBalance(currentWalletAddress),
@@ -618,16 +643,15 @@ async function handleSearch() {
     fetchTransactions(currentWalletAddress),
   ]);
   updateNetWorth();
-
-  const allFailed = results.every(result => result.status === 'rejected');
-
-  if (allFailed) {
-    showError('server');
-  }
-} finally {
+   if (failedFetchCount >= 4) {
+      showError('server');
+   }
+    // Already handled above using failedFetchCount.
+    
+    } finally {
   setSearchLoading(false);
   currentAbortController = null;
-}
+    }
 
   liveUpdateInterval = setInterval(() => {
     if (currentWalletAddress) fetchLivePrices(currentWalletAddress);
@@ -643,7 +667,6 @@ async function fetchSolBalance(address) {
   document.getElementById('solBalanceError')?.remove();
   try {
     const signal = currentAbortController?.signal;
-
     const [priceRes, balanceRes] = await Promise.all([
       fetch(`${API_BASE}/api/sol-price`, { signal }),
       fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
@@ -652,45 +675,44 @@ async function fetchSolBalance(address) {
     const priceData = await handleResponse(priceRes);
     const balanceData = await handleResponse(balanceRes);
 
-    // Store in state variables — avoids duplicate requests and parsing UI
     currentSolPrice = priceData.price || 0;
     currentSolBalance = balanceData.balance || 0;
-
     const change = priceData.change24h || 0;
     const usdValue = currentSolBalance * currentSolPrice;
 
-    // Load SOL logo
     if (solLogo?.dataset.src) solLogo.src = solLogo.dataset.src;
 
     solPriceEl.textContent = formatUSD(currentSolPrice);
     const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
     solPriceChange.textContent = changeFormatted;
     solPriceChange.className = 'sol-change ' + (change >= 0 ? 'gain' : 'loss');
+    show(document.getElementById('solMarketSection'));
 
     if (currentSolBalance === 0) {
-      solBalanceEl.textContent = 'This wallet has no SOL balance';
-      solBalanceUsd.textContent = '';
+      hide(solBalanceRow);
+      show(document.getElementById('solEmptyMsg'));
     } else {
+      hide(document.getElementById('solEmptyMsg'));
       solBalanceEl.textContent = formatSOL(currentSolBalance);
       solBalanceUsd.textContent = formatUSD(usdValue);
+      show(solBalanceRow);
     }
 
-    hideSkeletonShowContent(solSkeleton, solPriceRow, solBalanceRow);
-    revealCard(solPriceRow.closest('.card'));
+    hide(solSkeleton);
+    revealCard(solBalanceRow.closest('.card'));
 
   } catch (error) {
-    solFetchFailed = true;
     if (error.name === 'AbortError') return;
+    solFetchFailed = true;
+    failedFetchCount++;
     console.error('SOL balance error:', error);
     hide(solSkeleton);
-    hide(solPriceRow);
     hide(solBalanceRow);
     const solErrorMsg = document.createElement('p');
     solErrorMsg.id = 'solBalanceError';
     solErrorMsg.className = 'empty-msg';
     solErrorMsg.textContent = 'Unable to load SOL balance';
-    solPriceRow.closest('.card').appendChild(solErrorMsg);
-    showError(error.type || 'server');
+    solBalanceRow.closest('.card').appendChild(solErrorMsg);
   }
 }
 
@@ -727,6 +749,7 @@ async function fetchTokens(address) {
     tokenFetchFailed = true;
     if (error.name === 'AbortError') return;
     tokenDataAvailable = false;
+    failedFetchCount++;
     console.error('Token error:', error);
     hideSkeletonShowContent(tokenSkeleton, tokenList);
     hide(pieSkeleton);
@@ -734,7 +757,7 @@ async function fetchTokens(address) {
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load token holdings';
     tokenList.replaceChildren(msg);
-    showError(error.type || 'server');
+    
   }
 }
 
@@ -846,6 +869,7 @@ function renderTokenList(tokens) {
 
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
   tokenTotalValue.textContent = `Total: ${formatUSD(totalValue)}`;
+  tokenTotalValue.style.color = 'var(--off-white)';
   show(tokenTotalValue);
 
   const fragment = buildTokenRowsFragment(sorted);
@@ -1009,6 +1033,7 @@ function drawPieChart(tokens, totalValue) {
       pieChartInstance.data.labels = labels;
       pieChartInstance.data.datasets[0].data = values;
       pieChartInstance.data.datasets[0].backgroundColor = colors;
+      pieChartInstance.resize();
       pieChartInstance.update();
       return;
     }
@@ -1100,17 +1125,22 @@ async function fetchNFTs(address) {
 
   } catch (error) {
     if (error.name === 'AbortError') return;
+    failedFetchCount++;
     console.error('NFT error:', error);
     hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load NFTs';
     nftList.replaceChildren(msg);
-    showError(error.type || 'server');
+    
   }
 }
 
 function renderNFTList(nfts) {
+  if (nfts.length === 0) {
+  nftList.replaceChildren();
+  return;
+    }
   const collections = {};
   nfts.forEach(nft => {
     const collection = nft.grouping?.[0]?.group_value ||
@@ -1122,24 +1152,59 @@ function renderNFTList(nfts) {
   });
 
   const fragment = document.createDocumentFragment();
-  Object.entries(collections).forEach(([collectionName, items]) => {
-    const groupDiv = document.createElement('div');
-    groupDiv.className = 'nft-collection-group';
 
-    const title = document.createElement('p');
-    title.className = 'nft-collection-title';
-    title.textContent = `${collectionName} (${items.length})`;
-    groupDiv.appendChild(title);
+  Object.entries(collections).forEach(([collectionName, items]) => {
+    const group = document.createElement('div');
+    group.className = 'nft-group';
+
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.setAttribute('aria-expanded', 'false');
+    header.className = 'nft-group-header';
+
+    const chevron = document.createElement('i');
+    chevron.className = 'fa-solid fa-chevron-right nft-group-chevron';
+
+    const name = document.createElement('span');
+    name.className = 'nft-group-name';
+    name.textContent = collectionName;
+
+    const badge = document.createElement('span');
+    badge.className = 'nft-group-badge';
+    badge.textContent = items.length;
+
+    header.appendChild(chevron);
+    header.appendChild(name);
+    header.appendChild(badge);
+
+    const chipsWrapper = document.createElement('div');
+    chipsWrapper.className = 'nft-chips-wrapper hidden';
 
     items.forEach(nft => {
-      const item = document.createElement('p');
-      item.className = 'nft-collection-item';
-      item.textContent = nft.content?.metadata?.name || nft.name || 'Unknown NFT';
-      groupDiv.appendChild(item);
+      const chip = document.createElement('span');
+      chip.className = 'nft-chip';
+      chip.textContent = nft.content?.metadata?.name || nft.name || 'Unknown NFT';
+      chipsWrapper.appendChild(chip);
     });
 
-    fragment.appendChild(groupDiv);
+    header.addEventListener('click', () => {
+      const isOpen = !chipsWrapper.classList.contains('hidden');
+      if (isOpen) {
+    hide(chipsWrapper);
+    chevron.classList.remove('open');
+    header.setAttribute('aria-expanded', 'false');
+    } else {
+    show(chipsWrapper);
+    chevron.classList.add('open');
+    header.setAttribute('aria-expanded', 'true');
+       }
+    });
+
+    group.appendChild(header);
+    group.appendChild(chipsWrapper);
+    fragment.appendChild(group);
   });
+
   nftList.replaceChildren(fragment);
 }
 
@@ -1201,6 +1266,7 @@ function renderNFTGrid(nfts) {
 
 async function fetchTransactions(address) {
   document.getElementById('barChartError')?.remove();
+  document.getElementById('barChartEmpty')?.remove();
   try {
     const signal = currentAbortController?.signal;
     const res = await fetch(`${API_BASE}/api/transactions?address=${address}`, { signal });
@@ -1208,19 +1274,34 @@ async function fetchTransactions(address) {
     allTransactions = data.transactions || [];
 
     const age = calculateWalletAge(allTransactions);
-    if (age) { walletAgeEl.textContent = age; show(walletAgeEl); }
+    if (age) { walletAgeEl.textContent = age; show(document.getElementById('walletAgeRow')); }
 
-    barDataAvailable = true;
-    renderBarChart(allTransactions, currentBarRange, currentYearSelection);
+    if (allTransactions.length === 0) {
+      barDataAvailable = false;
+      hide(barSkeleton);
+      hide(barChart);
+      barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
+      const noActivityMsg = document.createElement('p');
+      noActivityMsg.id = 'barChartEmpty';
+      noActivityMsg.className = 'empty-msg';
+      noActivityMsg.textContent = 'This wallet has no chart activity';
+      barChart.closest('.chart-scroll-wrapper')?.appendChild(noActivityMsg);
+    } else {
+      barDataAvailable = true;
+      renderBarChart(allTransactions, currentBarRange, currentYearSelection);
+    }
+
     renderRecentTransactions(allTransactions);
     
 
   } catch (error) {
     if (error.name === 'AbortError') return;
     barDataAvailable = false;
+    failedFetchCount++;
     console.error('Transaction error:', error);
     hide(barSkeleton);
     hide(barChart);
+    barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
     const barErrorMsg = document.createElement('p');
     barErrorMsg.id = 'barChartError';
     barErrorMsg.className = 'empty-msg';
@@ -1231,13 +1312,16 @@ async function fetchTransactions(address) {
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load transactions';
     last7txList.replaceChildren(msg);
-    showError(error.type || 'server');
+    
   }
 }
 
 function describeTransaction(tx) {
   const type = tx.type?.toUpperCase() || '';
-  if (tx.description) return tx.description;
+  if (tx.description) {
+    // Truncate any full Solana addresses embedded in Helius's own description
+    return tx.description.replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, (match) => truncateAddress(match));
+  }
   if (type === 'TRANSFER') {
     if (tx.feePayer === currentWalletAddress) return `Sent SOL to ${truncateAddress(tx.nativeTransfers?.[0]?.toUserAccount || 'unknown')}`;
     return `Received SOL from ${truncateAddress(tx.nativeTransfers?.[0]?.fromUserAccount || 'unknown')}`;
@@ -1395,18 +1479,17 @@ function renderBarChart(transactions, range, yearCount = 1) {
     show(barChart);
 
     // Improvement 4: Update existing bar chart instead of recreating
-    if (barChartInstance) {
+  if (barChartInstance) {
       barChartInstance.data.labels = labels;
       barChartInstance.data.datasets[0].data = counts;
+      barChartInstance.resize();
       barChartInstance.update();
       revealCard(barChart.closest('.card'));
       return;
     }
 
     const ctx = barChart.getContext('2d');
-    const gradient = ctx.createLinearGradient(0, 0, 0, 220);
-    gradient.addColorStop(0, '#3b82f6');
-    gradient.addColorStop(1, '#1d4ed8');
+    const barColor = '#7c5cfc';
 
     barChartInstance = new Chart(ctx, {
       type: 'bar',
@@ -1415,7 +1498,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
         datasets: [{
           label: 'Transactions',
           data: counts,
-          backgroundColor: gradient,
+          backgroundColor: barColor,
           borderColor: 'transparent',
           borderWidth: 0,
           borderRadius: 0,
@@ -1423,7 +1506,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
         }],
       },
       options: {
-        responsive: false,
+        responsive: true,
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
@@ -1435,9 +1518,16 @@ function renderBarChart(transactions, range, yearCount = 1) {
             borderColor: '#7c5cfc',
             borderWidth: 1,
             padding: 12,
+            usePointStyle: true,
+            boxWidth: 8,
+            boxHeight: 8,
             callbacks: {
               title: (items) => items[0]?.label || '',
               label: (item) => `Transactions: ${item.raw}`,
+              labelColor: () => ({
+                borderColor: '#7c5cfc',
+                backgroundColor: '#7c5cfc',
+              }),
             },
           },
         },
@@ -1456,6 +1546,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
       },
     });
 
+    barChartInstance.resize();
     revealCard(barChart.closest('.card'));
   }, CONFIG.CHART_DRAW_DELAY);
 }
@@ -1532,10 +1623,14 @@ function updateNetWorth() {
     const total = solValueUSD + tokenTotal;
 
     netWorthValue.textContent = formatUSD(total);
+    netWorthValue.style.color = 'var(--off-white)';
     hide(netWorthSkeleton);
     show(netWorthLabel);
     show(netWorthValue);
-    revealCard(totalNetWorth);
+    if (!netWorthRevealed) {
+      revealCard(totalNetWorth);
+      netWorthRevealed = true;
+    }
   } catch (error) {
     console.error('Net worth error:', error);
     hide(netWorthSkeleton);
@@ -1551,27 +1646,31 @@ function updateNetWorth() {
 
 async function fetchLivePrices() {
   try {
-    const res = await fetch(`${API_BASE}/api/sol-price`, {
-  signal: currentAbortController?.signal,
-});
-    if (!res.ok) return;
+    const res = await fetch(`${API_BASE}/api/sol-price`);
+    if (!res.ok) {
+  throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
+    }
     const priceData = await res.json();
-    
     liveUpdateFailures = 0;
 
-    // Update stored state variables
     currentSolPrice = priceData.price || 0;
     const change = priceData.change24h || 0;
 
+    // Only these three refresh live, per spec: USD balance, price, 24h change
     solPriceEl.textContent = formatUSD(currentSolPrice);
     const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
     solPriceChange.textContent = changeFormatted;
     solPriceChange.className = 'sol-change ' + (change >= 0 ? 'gain' : 'loss');
+    if (currentSolBalance > 0) {
+      solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
+    }
 
     await fetchTokenPrices(allTokens);
-    if (allTokens.length > 0) renderTokenList(allTokens);
-
-    updateNetWorth();
+    if (allTokens.length > 0) {
+      renderTokenList(allTokens); // already calls updateNetWorth() internally
+    } else {
+      updateNetWorth(); // only needed here — no renderTokenList call to trigger it otherwise
+    }
   } catch (error) {
   if (error.name === 'AbortError') return;
 

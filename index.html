@@ -86,25 +86,40 @@
     <div class="skeleton skeleton-line short"></div>
   </div>
 
-  <!-- Real Content -->
-  <div id="solPriceRow" class="sol-price-row hidden">
-    <img
-  id="solLogo"
-  src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-  data-src="images/sol-logo.png"
-  alt="SOL"
-  class="token-logo"
-  loading="lazy"
-  onerror="this.src='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='"
-/>
-    <span id="solPrice" class="sol-price"></span>
-    <span id="solPriceChange" class="sol-change"></span>
-  </div>
+  <!-- Your Balance Row -->
   <div id="solBalanceRow" class="sol-balance-row hidden">
     <span id="solBalance" class="sol-balance-amount"></span>
     <span id="solBalanceUsd" class="sol-balance-usd"></span>
   </div>
-  <p id="walletAge" class="wallet-age hidden"></p>
+  <p id="solEmptyMsg" class="empty-msg hidden">This wallet has no SOL balance</p>
+
+  <!-- Market Section -->
+  <div id="solMarketSection" class="sol-market-section hidden">
+    <p class="sol-market-heading">Market</p>
+    <div class="sol-market-row">
+      <img
+        id="solLogo"
+        src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+        data-src="sol-logo.png"
+        alt="SOL"
+        class="token-logo"
+        loading="lazy"
+        onerror="this.src='data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='"
+      />
+      <span class="sol-market-label">SOL price</span>
+      <span id="solPrice" class="sol-price"></span>
+    </div>
+    <div class="sol-market-row">
+      <span class="sol-market-label">24h change</span>
+      <span id="solPriceChange" class="sol-change"></span>
+    </div>
+  </div>
+
+  <!-- Wallet Age -->
+  <div id="walletAgeRow" class="wallet-age-row hidden">
+    <i class="fa-regular fa-clock"></i>
+    <span id="walletAge"></span>
+  </div>
 </div>
 
     <!-- Card 2 — Token Holdings -->
