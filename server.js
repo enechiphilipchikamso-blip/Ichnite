@@ -204,6 +204,59 @@ app.get('/api/sol-balance', async (req, res) => {
   }
 });
 
+// Resolves symbol/name/logo for a list of mints via Helius getAssetBatch.
+// Chunked at 1000 ids per call (Helius's documented batch limit), run in parallel.
+async function resolveTokenMetadata(mints) {
+  const metadataMap = new Map();
+  if (mints.length === 0) return metadataMap;
+
+  const CHUNK_SIZE = 1000;
+  const chunks = [];
+  for (let i = 0; i < mints.length; i += CHUNK_SIZE) {
+    chunks.push(mints.slice(i, i + CHUNK_SIZE));
+  }
+
+  await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      try {
+        const data = await safeFetch(
+          `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'getAssetBatch',
+              params: { ids: chunk },
+            }),
+          }
+        );
+
+        const assets = Array.isArray(data.result) ? data.result : [];
+        for (const asset of assets) {
+          if (!asset || !asset.id) continue;
+          const meta = asset.content?.metadata || {};
+          const image =
+            asset.content?.links?.image ||
+            asset.content?.files?.[0]?.uri ||
+            null;
+
+          metadataMap.set(asset.id, {
+            symbol: meta.symbol || null,
+            name: meta.name || null,
+            logoURI: image,
+          });
+        }
+      } catch (err) {
+        console.error('Metadata batch error:', err.message);
+      }
+    })
+  );
+
+  return metadataMap;
+}
+
 // ── Route 3 — GET /api/tokens?address= ──
 // Fetches SPL token holdings from Helius or Shyft
 app.get('/api/tokens', async (req, res) => {
@@ -276,61 +329,6 @@ app.get('/api/tokens', async (req, res) => {
     });
   }
 });
-
-// Resolves symbol/name/logo for a list of mints via Helius getAssetBatch.
-// Chunked at 1000 ids per call (Helius's documented batch limit).
-async function resolveTokenMetadata(mints) {
-  const metadataMap = new Map();
-  if (mints.length === 0) return metadataMap;
-
-  const CHUNK_SIZE = 1000;
-  const chunks = [];
-  for (let i = 0; i < mints.length; i += CHUNK_SIZE) {
-    chunks.push(mints.slice(i, i + CHUNK_SIZE));
-  }
-
-  for (const chunk of chunks) {
-    try {
-      const data = await safeFetch(
-        `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'getAssetBatch',
-            params: { ids: chunk },
-          }),
-        }
-      );
-      
-      console.log(JSON.stringify(data.result?.[0], null, 2));
-
-      const assets = Array.isArray(data.result) ? data.result : [];
-      for (const asset of assets) {
-        if (!asset || !asset.id) continue;
-        const meta = asset.content?.metadata || {};
-        const image =
-          asset.content?.links?.image ||
-          asset.content?.files?.[0]?.uri ||
-          null;
-
-        metadataMap.set(asset.id, {
-          symbol: meta.symbol || null,
-          name: meta.name || null,
-          logoURI: image,
-        });
-      }
-    } catch (err) {
-      // Metadata resolution failing shouldn't break the whole response —
-      // affected tokens just fall back to the truncated-mint display.
-      console.error('Metadata batch error:', err.message);
-    }
-  }
-
-  return metadataMap;
-}
 
 // ── Route 4 — GET /api/nfts?address= ──
 // Fetches NFT holdings from Helius or Shyft
