@@ -598,10 +598,27 @@ grid-template-columns: repeat(4, 1fr);
 
 /* ── Skeleton Token Row ── */
 .skeleton-token-row {
-  width: 100%;
-  height: 44px;
-  border-radius: 10px;
-  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.skeleton-token-row .skeleton-circle {
+  width: 28px;
+  height: 28px;
+}
+
+.skeleton-token-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.token-total-skeleton {
+  display: flex;
+  align-items: flex-end;
 }
 
 /* ── Skeleton NFT Card ── */
@@ -1588,6 +1605,31 @@ grid-template-columns: repeat(4, 1fr);
 .token-total-label {
   color: var(--blue-purple-faded);
   font-size: 0.7rem;
+}
+
+.sol-skeleton-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sol-skeleton-balance-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skeleton-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.skeleton-divider {
+  height: 1px;
+  background: rgba(124, 92, 252, 0.15);
+  margin: 8px 0;
 }
 
 /*

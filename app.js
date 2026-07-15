@@ -469,6 +469,7 @@ function showAllSkeletons() {
   hide(solBalanceRow);
   hide(walletAgeEl);
   show(tokenSkeleton);
+  show(document.getElementById('tokenTotalSkeleton'));
   hide(tokenList);
   hide(tokenTotalValue);
   show(pieSkeleton);
@@ -610,7 +611,7 @@ async function handleSearch() {
   clearTimeout(inputValidTimeout);
   inputValidTimeout = setTimeout(() => {
     walletInput.classList.remove('input-valid');
-  }, 4000);
+  }, 5000);
   setSearchLoading(true);
   showAllSkeletons();
   
@@ -744,7 +745,7 @@ async function fetchTokens(address) {
       return;
     }
 
-    await fetchTokenPrices(allTokens);
+    // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
     renderTokenList(allTokens);
 
@@ -793,17 +794,12 @@ tokenPrices = data && typeof data === 'object' ? data : {};
     }
 
 function getTokenUsdValue(token) {
-  const geckoId = getCoinGeckoId(token.symbol);
-  const symbol = token.symbol?.toLowerCase();
-  // Try verified ID first then fall back to symbol
-  const price = (geckoId && tokenPrices[geckoId]?.usd) || tokenPrices[symbol]?.usd || 0;
-  return (token.amount || 0) * price;
+  if (token.priceUsd === null || token.priceUsd === undefined) return 0;
+  return (token.amount || 0) * token.priceUsd;
 }
 
-function getTokenPriceChange(token) {
-  const geckoId = getCoinGeckoId(token.symbol);
-  const symbol = token.symbol?.toLowerCase();
-  return (geckoId && tokenPrices[geckoId]?.usd_24h_change) || tokenPrices[symbol]?.usd_24h_change || 0;
+function hasKnownPrice(token) {
+  return token.priceUsd !== null && token.priceUsd !== undefined;
 }
 
 // Shared row-builder — used by both full render and sort-only reorder
@@ -874,6 +870,7 @@ function renderTokenList(tokens) {
 
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
   
+  hide(document.getElementById('tokenTotalSkeleton'));
   tokenTotalValue.textContent = formatUSD(totalValue);
   show(tokenTotalValue);
 
@@ -1047,8 +1044,9 @@ function drawPieChart(tokens, totalValue) {
   show(pieSpinner);
 
   const labels = tokens.map(t => t.symbol || 'Unknown');
-  const values = tokens.map(t => getTokenUsdValue(t));
+  const values = tokens.map(t => parseFloat(t.amount) || 0); // amount-based, decoupled from price availability
   const colors = tokens.map(t => getTokenColor(t.symbol));
+  const amountTotal = values.reduce((a, b) => a + b, 0);
 
   setTimeout(() => {
     hide(pieSpinner);
@@ -1104,11 +1102,11 @@ function drawPieChart(tokens, totalValue) {
             callbacks: {
               label(context) {
                 const token = tokens[context.dataIndex];
-                const value = values[context.dataIndex];
-                const percentage = totalValue > 0 ? ((value / totalValue) * 100).toFixed(1) : '0.0';
+                const amount = values[context.dataIndex];
+                const percentage = amountTotal > 0 ? ((amount / amountTotal) * 100).toFixed(1) : '0.0';
                 return [
-                  `Amount: ${parseFloat(token.amount || 0).toFixed(4)}`,
-                  `Value: ${formatUSD(value)}`,
+                  `Amount: ${amount.toFixed(4)}`,
+                  hasKnownPrice(token) ? `Value: ${formatUSD(getTokenUsdValue(token))}` : 'Price unavailable',
                   `Share: ${percentage}%`,
                 ];
               },
@@ -1696,12 +1694,8 @@ async function fetchLivePrices() {
       solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
     }
 
-    const succeeded = await fetchTokenPrices(allTokens);
-    if (allTokens.length > 0 && succeeded) {
-      renderTokenList(allTokens); // only re-render if new prices actually arrived
-    } else {
-      updateNetWorth();
-    }
+    updateNetWorth();
+    
   } catch (error) {
   if (error.name === 'AbortError') return;
 
@@ -1826,60 +1820,7 @@ window.addEventListener('online', () => {
 });
 
 // ════════════════════════════════════════
-// ── FLOATING BACKGROUND LOGOS ──
-// ════════════════════════════════════════
-
-/*
-function getFloatingLogoCount() {
-  const width = window.innerWidth;
-  if (width < 480) return 3;
-  if (width < 768) return 5;
-  if (width < 1024) return 7;
-  return 10;
-}
-
-function showFloatingLogos() {
-  const container = document.getElementById('floatingLogosContainer');
-  if (!container || container.children.length > 0) return;
-
-  const count = getFloatingLogoCount();
-  for (let i = 0; i < count; i++) {
-    const img = document.createElement('img');
-    img.decoding = 'async';
-    img.src = 'images/logo.png';
-    img.alt = '';
-    img.className = 'floating-bg-logo';
-    img.setAttribute('aria-hidden', 'true');
-    img.style.setProperty('--logo-top', `${Math.random() * 80 + 5}%`);
-    img.style.setProperty('--logo-left', `${Math.random() * 90 + 5}%`);
-    img.style.setProperty('--logo-duration', `${6 + Math.random() * 6}s`);
-    img.style.setProperty('--logo-delay', `${Math.random() * 4}s`);
-    container.appendChild(img);
-  }
-}
-
-function hideFloatingLogos() {
-  const container = document.getElementById('floatingLogosContainer');
-  if (container) container.replaceChildren();
-}
-
-let floatingLogoResizeTimer = null;
-window.addEventListener('resize', () => {
-  clearTimeout(floatingLogoResizeTimer);
-  floatingLogoResizeTimer = setTimeout(() => {
-    const container = document.getElementById('floatingLogosContainer');
-    if (container && container.children.length > 0) {
-      hideFloatingLogos();
-      showFloatingLogos();
-    }
-  }, 300);
-});
-*/
-
-// ════════════════════════════════════════
 // ── 31. INITIALIZATION ──
 // ════════════════════════════════════════
 
 renderSearchHistory();
-
-/* showFloatingLogos(); */

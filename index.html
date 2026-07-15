@@ -80,9 +80,17 @@
  <div class="card">
   <h2>SOL Balance</h2>
 
-  <div id="solSkeleton">
-    <div class="skeleton skeleton-line"></div>
-    <div class="skeleton skeleton-line short"></div>
+  <div id="solSkeleton" class="sol-skeleton-wrapper">
+    <div class="sol-skeleton-balance-row">
+      <div class="skeleton skeleton-circle"></div>
+      <div class="skeleton skeleton-line" style="width: 90px;"></div>
+      <div class="skeleton skeleton-line short" style="margin-left: auto; width: 60px;"></div>
+    </div>
+    <div class="skeleton skeleton-line" style="width: 60px; height: 12px; margin-top: 18px;"></div>
+    <div class="skeleton skeleton-line" style="width: 100%;"></div>
+    <div class="skeleton skeleton-line" style="width: 100%;"></div>
+    <div class="skeleton-divider"></div>
+    <div class="skeleton skeleton-line" style="width: 70%;"></div>
   </div>
 
   <div id="solBalanceRow" class="sol-balance-row hidden">
@@ -128,9 +136,12 @@
       <div class="token-holdings-header">
   <h2>Token Holdings</h2>
   <div class="token-total-group">
+    <div id="tokenTotalSkeleton" class="token-total-skeleton">
+      <div class="skeleton skeleton-line" style="width: 70px; height: 20px;"></div>
+    </div>
     <span id="tokenTotalValue" class="token-total-value hidden"></span>
     <span class="token-total-label">Total value</span>
-    </div>
+  </div>
   </div>
   <div class="token-controls-row">
     <input
@@ -154,9 +165,46 @@
   </div>
       <!-- Skeleton -->
 <div id="tokenSkeleton">
-  <div class="skeleton skeleton-token-row"></div>
-  <div class="skeleton skeleton-token-row"></div>
-  <div class="skeleton skeleton-token-row"></div>
+  <div class="skeleton-token-row">
+    <div class="skeleton skeleton-circle"></div>
+    <div class="skeleton-token-lines">
+      <div class="skeleton skeleton-line" style="width: 60%; height: 12px;"></div>
+      <div class="skeleton skeleton-line" style="width: 35%; height: 10px;"></div>
+    </div>
+    <div class="skeleton skeleton-line" style="width: 50px; height: 12px;"></div>
+  </div>
+  <div class="skeleton-token-row">
+    <div class="skeleton skeleton-circle"></div>
+    <div class="skeleton-token-lines">
+      <div class="skeleton skeleton-line" style="width: 60%; height: 12px;"></div>
+      <div class="skeleton skeleton-line" style="width: 35%; height: 10px;"></div>
+    </div>
+    <div class="skeleton skeleton-line" style="width: 50px; height: 12px;"></div>
+  </div>
+  <div class="skeleton-token-row">
+    <div class="skeleton skeleton-circle"></div>
+    <div class="skeleton-token-lines">
+      <div class="skeleton skeleton-line" style="width: 60%; height: 12px;"></div>
+      <div class="skeleton skeleton-line" style="width: 35%; height: 10px;"></div>
+    </div>
+    <div class="skeleton skeleton-line" style="width: 50px; height: 12px;"></div>
+  </div>
+  <div class="skeleton-token-row">
+    <div class="skeleton skeleton-circle"></div>
+    <div class="skeleton-token-lines">
+      <div class="skeleton skeleton-line" style="width: 60%; height: 12px;"></div>
+      <div class="skeleton skeleton-line" style="width: 35%; height: 10px;"></div>
+    </div>
+    <div class="skeleton skeleton-line" style="width: 50px; height: 12px;"></div>
+  </div>
+  <div class="skeleton-token-row">
+    <div class="skeleton skeleton-circle"></div>
+    <div class="skeleton-token-lines">
+      <div class="skeleton skeleton-line" style="width: 60%; height: 12px;"></div>
+      <div class="skeleton skeleton-line" style="width: 35%; height: 10px;"></div>
+    </div>
+    <div class="skeleton skeleton-line" style="width: 50px; height: 12px;"></div>
+  </div>
 </div>
 
 <!-- Real Content -->

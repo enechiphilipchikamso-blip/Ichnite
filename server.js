@@ -241,11 +241,14 @@ async function resolveTokenMetadata(mints) {
             asset.content?.links?.image ||
             asset.content?.files?.[0]?.uri ||
             null;
+          const tokenInfo = asset.token_info || {};
 
           metadataMap.set(asset.id, {
-            symbol: meta.symbol || null,
+            symbol: meta.symbol || tokenInfo.symbol || null,
             name: meta.name || null,
             logoURI: image,
+            decimals: typeof tokenInfo.decimals === 'number' ? tokenInfo.decimals : 0,
+            priceUsd: tokenInfo.price_info?.price_per_token ?? null,
           });
         }
       } catch (err) {
@@ -294,16 +297,20 @@ app.get('/api/tokens', async (req, res) => {
       const filtered = accounts.filter((t) => t.amount > 0);
       const metadataMap = await resolveTokenMetadata(filtered.map((t) => t.mint));
 
-      mappedTokens = filtered.map((t) => {
-        const meta = metadataMap.get(t.mint);
-        return {
-          mint: t.mint,
-          amount: t.amount,
-          symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
-          name: meta?.name || null,
-          logoURI: meta?.logoURI || null,
-        };
-      });
+      mappedTokens = filtered
+        .map((t) => {
+          const meta = metadataMap.get(t.mint);
+          const decimals = meta?.decimals ?? 0;
+          return {
+            mint: t.mint,
+            amount: t.amount / Math.pow(10, decimals), // fixes raw-base-unit display bug
+            symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
+            name: meta?.name || null,
+            logoURI: meta?.logoURI || null,
+            priceUsd: meta?.priceUsd ?? null, // from Helius directly — no CoinGecko round-trip
+          };
+        })
+        .filter((t) => t.amount > 0); // guard against rounding to 0 on extreme-decimal tokens
 
       res.json({ tokens: mappedTokens });
     } else if (SHYFT_API_KEY) {
