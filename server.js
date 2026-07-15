@@ -293,12 +293,15 @@ app.get('/api/tokens', async (req, res) => {
       const mints = [...new Set(accounts.map((t) => t.mint))];
       const metadataMap = await resolveTokenMetadata(mints);
 
-      mappedTokens = accounts.map((t) => {
+      const filtered = accounts.filter((t) => t.amount > 0);
+      const metadataMap = await resolveTokenMetadata(filtered.map((t) => t.mint));
+
+      mappedTokens = filtered.map((t) => {
         const meta = metadataMap.get(t.mint);
         return {
           mint: t.mint,
           amount: t.amount,
-          symbol: meta?.symbol || t.mint.slice(0, 4) + '...' + t.mint.slice(-4),
+          symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
           name: meta?.name || null,
           logoURI: meta?.logoURI || null,
         };

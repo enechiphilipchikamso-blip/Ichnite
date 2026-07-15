@@ -610,7 +610,7 @@ async function handleSearch() {
   clearTimeout(inputValidTimeout);
   inputValidTimeout = setTimeout(() => {
     walletInput.classList.remove('input-valid');
-  }, 3000);
+  }, 4000);
   setSearchLoading(true);
   showAllSkeletons();
   
@@ -701,18 +701,21 @@ async function fetchSolBalance(address) {
     hide(solSkeleton);
     revealCard(solBalanceRow.closest('.card'));
 
-  } catch (error) {
+} catch (error) {
     if (error.name === 'AbortError') return;
     solFetchFailed = true;
     failedFetchCount++;
     console.error('SOL balance error:', error);
     hide(solSkeleton);
     hide(solBalanceRow);
+    hide(document.getElementById('solEmptyMsg'));
+    document.getElementById('solBalanceError')?.remove();
     const solErrorMsg = document.createElement('p');
     solErrorMsg.id = 'solBalanceError';
     solErrorMsg.className = 'empty-msg';
     solErrorMsg.textContent = 'Unable to load SOL balance';
-    solBalanceRow.closest('.card').appendChild(solErrorMsg);
+    // Insert only within the balance row's position — never touches Market/Wallet Age
+    solBalanceRow.insertAdjacentElement('afterend', solErrorMsg);
   }
 }
 
@@ -762,35 +765,32 @@ async function fetchTokens(address) {
 }
 
 async function fetchTokenPrices(tokens) {
+  let priceFetchSucceeded = false;
   try {
-    // Improvement 3: Use verified CoinGecko IDs instead of symbols
+    // Only send tokens with a verified CoinGecko ID — never guess.
+    // Unknown tokens simply show $0.00 rather than risking a 400 for everyone.
     const ids = tokens
       .map(t => getCoinGeckoId(t.symbol))
       .filter(Boolean);
 
-    // Also add any unknown tokens by symbol as fallback
-    const unknownSymbols = tokens
-      .filter(t => !getCoinGeckoId(t.symbol))
-      .map(t => t.symbol?.toLowerCase())
-      .filter(Boolean);
-
-    const allIds = [...new Set([...ids, ...unknownSymbols])].join(',');
+    const allIds = [...new Set(ids)].join(',');
     if (!allIds) return;
 
-    const res = await fetch(
-  `${API_BASE}/api/token-prices?ids=${encodeURIComponent(allIds)}`,
-  {
-    signal: currentAbortController?.signal,
-  }
+    const res = await fetch(`${API_BASE}/api/token-prices?ids=${encodeURIComponent(allIds)}`, 
+      {  signal: currentAbortController?.signal,  }
     );
     if (!res.ok) throw new Error('Price API error');
     tokenPrices = await res.json();
+    const data = await res.json();
+tokenPrices = data && typeof data === 'object' ? data : {};
+    priceFetchSucceeded = true;
   } catch (error) {
-    if (error.name === 'AbortError') return;
-    console.warn('Token prices unavailable:', error);
-    tokenPrices = {};
-  }
-}
+    if (error.name === 'AbortError') return false;
+    console.warn('Token prices unavailable, keeping last known prices:', error);
+    // Do NOT wipe tokenPrices — keep last known good values instead of resetting to $0.00
+      }
+      return priceFetchSucceeded;
+    }
 
 function getTokenUsdValue(token) {
   const geckoId = getCoinGeckoId(token.symbol);
@@ -832,21 +832,26 @@ function buildTokenRowsFragment(sortedTokens) {
       img.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
     };
 
-    const amountSpan = document.createElement('span');
-    amountSpan.className = 'token-amount';
-    amountSpan.textContent = amount;
+    const infoCol = document.createElement('div');
+    infoCol.className = 'token-info-col';
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'token-name';
     nameSpan.textContent = symbol;
 
+    const amountSpan = document.createElement('span');
+    amountSpan.className = 'token-amount';
+    amountSpan.textContent = amount;
+
+    infoCol.appendChild(nameSpan);
+    infoCol.appendChild(amountSpan);
+
     const valueSpan = document.createElement('span');
-    valueSpan.className = `token-value ${changeClass}`;
+    valueSpan.className = 'token-value';
     valueSpan.textContent = formatUSD(usdValue);
 
     row.appendChild(img);
-    row.appendChild(amountSpan);
-    row.appendChild(nameSpan);
+    row.appendChild(infoCol);
     row.appendChild(valueSpan);
     fragment.appendChild(row);
   });
@@ -868,8 +873,8 @@ function renderTokenList(tokens) {
   const sorted = sortTokens(tokens);
 
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
-  tokenTotalValue.textContent = `Total: ${formatUSD(totalValue)}`;
-  tokenTotalValue.style.color = 'var(--off-white)';
+  
+  tokenTotalValue.textContent = formatUSD(totalValue);
   show(tokenTotalValue);
 
   const fragment = buildTokenRowsFragment(sorted);
@@ -879,6 +884,13 @@ function renderTokenList(tokens) {
   tokenList.querySelectorAll('img[data-src]').forEach(img => {
     if (img.dataset.src) img.src = img.dataset.src;
   });
+
+  const fadeEl = document.getElementById('tokenScrollFade');
+  if (sorted.length > 5) {
+    show(fadeEl);
+  } else {
+    hide(fadeEl);
+  }
 
   hideSkeletonShowContent(tokenSkeleton, tokenList);
   revealCard(tokenList.closest('.card'));
@@ -900,6 +912,13 @@ function resortTokenListOnly() {
   tokenList.querySelectorAll('img[data-src]').forEach(img => {
     if (img.dataset.src) img.src = img.dataset.src;
   });
+
+  const fadeEl = document.getElementById('tokenScrollFade');
+  if (sorted.length > 5) {
+    show(fadeEl);
+  } else {
+    hide(fadeEl);
+  }
 }
 
 // Lightweight filter — used only when the user types in the token search box.
@@ -922,6 +941,13 @@ function filterTokenListOnly() {
   tokenList.querySelectorAll('img[data-src]').forEach(img => {
     if (img.dataset.src) img.src = img.dataset.src;
   });
+
+  const fadeEl = document.getElementById('tokenScrollFade');
+  if (sorted.length > 5) {
+    show(fadeEl);
+  } else {
+    hide(fadeEl);
+  }
 }
 
 if (tokenSearch) {
@@ -1091,6 +1117,7 @@ function drawPieChart(tokens, totalValue) {
         },
       },
     });
+    pieChartInstance.resize();
   }, CONFIG.CHART_DRAW_DELAY);
 }
 
@@ -1126,13 +1153,17 @@ async function fetchNFTs(address) {
   } catch (error) {
     if (error.name === 'AbortError') return;
     failedFetchCount++;
-    console.error('NFT error:', error);
+    console.error('NFT error:', error.message);
+    nftGrid.replaceChildren();
+    nftList.replaceChildren();
+
     hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
+
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
-    msg.textContent = 'Unable to load NFTs';
-    nftList.replaceChildren(msg);
-    
+     msg.textContent = 'Unable to load NFTs';
+
+    nftList.appendChild(msg);
   }
 }
 
@@ -1665,11 +1696,11 @@ async function fetchLivePrices() {
       solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
     }
 
-    await fetchTokenPrices(allTokens);
-    if (allTokens.length > 0) {
-      renderTokenList(allTokens); // already calls updateNetWorth() internally
+    const succeeded = await fetchTokenPrices(allTokens);
+    if (allTokens.length > 0 && succeeded) {
+      renderTokenList(allTokens); // only re-render if new prices actually arrived
     } else {
-      updateNetWorth(); // only needed here — no renderTokenList call to trigger it otherwise
+      updateNetWorth();
     }
   } catch (error) {
   if (error.name === 'AbortError') return;

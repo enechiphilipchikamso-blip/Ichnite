@@ -243,10 +243,9 @@ main {
   background-color: var(--card-bg);
   border-radius: 20px;
   padding: 20px;
-  margin-bottom: 6px;
   width: 100%;
   min-width: 0;
-  flex: 1;
+  overflow-x: hidden;
 }
 
 /* ── H2 ── */
@@ -333,6 +332,12 @@ p {
 }
 
 /* ── Token Row ── */
+.token-list-scroll-wrapper {
+  position: relative;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 .token-row {
   display: flex;
   align-items: center;
@@ -341,12 +346,43 @@ p {
   border-bottom: 1px solid rgba(124, 92, 252, 0.15);
 }
 
+.token-info-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.token-name {
+  font-weight: 700;
+}
+
+.token-amount {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.token-scroll-fade {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, var(--card-bg));
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  color: var(--blue-purple-faded);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
 .token-row:last-child {
   border-bottom: none;
 }
 
 .token-amount {
-  color: var(--white);
+  color: var(--off-white);
   font-size: 0.95rem;
   font-weight: 600;
 }
@@ -363,12 +399,8 @@ p {
   margin-left: auto;
 }
 
-.token-value.gain {
-  color: var(--gain);
-}
-
-.token-value.loss {
-  color: var(--loss);
+.token-value {
+  color: var(--off-white);
 }
 
 /* ── Pie Chart ── */
@@ -1385,6 +1417,44 @@ grid-template-columns: repeat(4, 1fr);
   border-top: 1px solid rgba(124, 92, 252, 0.15);
 }
 
+.sol-balance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sol-balance-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sol-divider {
+  height: 1px;
+  background: rgba(124, 92, 252, 0.15);
+  margin: 12px 0;
+}
+
+.wallet-age-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wallet-age-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--market-heading);
+  font-size: 0.85rem;
+}
+
+.wallet-age-value {
+  color: var(--market-heading);
+  font-size: 0.85rem;
+}
+
 .sol-market-heading {
   color: var(--market-heading);
   font-size: 0.8rem;
@@ -1465,6 +1535,10 @@ grid-template-columns: repeat(4, 1fr);
   font-weight: 600;
   flex: 1;
   text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nft-group-badge {
@@ -1474,6 +1548,7 @@ grid-template-columns: repeat(4, 1fr);
   font-weight: 700;
   padding: 2px 10px;
   border-radius: 50px;
+  flex-shrink: 0;
 }
 
 .nft-chips-wrapper {
@@ -1489,6 +1564,30 @@ grid-template-columns: repeat(4, 1fr);
   font-size: 0.78rem;
   padding: 5px 12px;
   border-radius: 50px;
+}
+
+.token-holdings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.token-total-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.token-total-value {
+  color: var(--off-white);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.token-total-label {
+  color: var(--blue-purple-faded);
+  font-size: 0.7rem;
 }
 
 /*
