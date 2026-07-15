@@ -290,8 +290,6 @@ app.get('/api/tokens', async (req, res) => {
       );
 
       // Step 2 — resolve metadata for all mints in one batch call
-      const mints = [...new Set(accounts.map((t) => t.mint))];
-      const metadataMap = await resolveTokenMetadata(mints);
 
       const filtered = accounts.filter((t) => t.amount > 0);
       const metadataMap = await resolveTokenMetadata(filtered.map((t) => t.mint));
