@@ -248,6 +248,13 @@ main {
   overflow-x: hidden;
 }
 
+.chart-scroller {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+
 /* ── H2 ── */
 h2 {
   color: var(--blue-soft);
