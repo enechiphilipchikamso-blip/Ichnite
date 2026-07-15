@@ -112,6 +112,7 @@ app.use(express.json());
 
 // ── API Keys — loaded from .env — never sent to browser ──
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
 const SHYFT_API_KEY = process.env.SHYFT_API_KEY;
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
 
@@ -204,8 +205,18 @@ app.get('/api/sol-balance', async (req, res) => {
   }
 });
 
-// Resolves symbol/name/logo for a list of mints via Helius getAssetBatch.
-// Chunked at 1000 ids per call (Helius's documented batch limit), run in parallel.
+// Decimal-safe: BigInt division, converted to Number only after scaling to human range
+function rawAmountToDecimal(rawAmountStr, decimals) {
+  const raw = BigInt(rawAmountStr);
+  const divisor = 10n ** BigInt(decimals);
+  const whole = raw / divisor;
+  const fraction = raw % divisor;
+  const absFraction = fraction < 0n ? -fraction : fraction;
+  const fractionStr = absFraction.toString().padStart(decimals, '0');
+  return decimals > 0 ? `${whole}.${fractionStr}` : `${whole}`; // returns a String, never a Number
+}
+
+// Stage 1 — Helius DAS getAssetBatch (metadata + price, requires showFungibleTokens)
 async function resolveTokenMetadata(mints) {
   const metadataMap = new Map();
   if (mints.length === 0) return metadataMap;
@@ -228,7 +239,10 @@ async function resolveTokenMetadata(mints) {
               jsonrpc: '2.0',
               id: 1,
               method: 'getAssetBatch',
-              params: { ids: chunk },
+              params: {
+                ids: chunk,
+                displayOptions: { showFungible: true }, // REQUIRED for token_info/price_info
+              },
             }),
           }
         );
@@ -249,15 +263,71 @@ async function resolveTokenMetadata(mints) {
             logoURI: image,
             decimals: typeof tokenInfo.decimals === 'number' ? tokenInfo.decimals : 0,
             priceUsd: tokenInfo.price_info?.price_per_token ?? null,
+            priceSource: tokenInfo.price_info?.price_per_token != null ? 'helius' : null,
           });
         }
       } catch (err) {
-        console.error('Metadata batch error:', err.message);
+        console.error('Helius metadata batch error:', err.message);
       }
     })
   );
 
   return metadataMap;
+}
+
+// Stage 2 — Jupiter Price V3 fallback (max 50 ids per request, confirmed via official docs)
+async function resolveJupiterPrices(mints) {
+  const priceMap = new Map();
+  if (mints.length === 0 || !JUPITER_API_KEY) return priceMap;
+
+  const CHUNK_SIZE = 50; // Jupiter's documented per-request limit
+  const chunks = [];
+  for (let i = 0; i < mints.length; i += CHUNK_SIZE) {
+    chunks.push(mints.slice(i, i + CHUNK_SIZE));
+  }
+
+  await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      try {
+        const data = await safeFetch(
+          `https://api.jup.ag/price/v3?ids=${chunk.join(',')}`,
+          { headers: { 'x-api-key': JUPITER_API_KEY } }
+        );
+        // Jupiter omits unpriced tokens entirely — no key present, not null
+        for (const mint of chunk) {
+          if (data[mint] && typeof data[mint].usdPrice === 'number') {
+            priceMap.set(mint, { priceUsd: data[mint].usdPrice, priceSource: 'jupiter' });
+          }
+        }
+      } catch (err) {
+        console.error('Jupiter price batch error:', err.message);
+      }
+    })
+  );
+
+  return priceMap;
+}
+
+// Stage 3 — Raydium V3 fallback (free, unauthenticated, fair-use — last resort only)
+async function resolveRaydiumPrices(mints) {
+  const priceMap = new Map();
+  if (mints.length === 0) return priceMap;
+
+  try {
+    const data = await safeFetch(
+      `https://api-v3.raydium.io/mint/price?mints=${mints.join(',')}`
+    );
+    const prices = data?.data || {};
+    for (const mint of mints) {
+      if (prices[mint]) {
+        priceMap.set(mint, { priceUsd: parseFloat(prices[mint]), priceSource: 'raydium' });
+      }
+    }
+  } catch (err) {
+    console.error('Raydium price error:', err.message);
+  }
+
+  return priceMap;
 }
 
 // ── Route 3 — GET /api/tokens?address= ──
@@ -294,23 +364,45 @@ app.get('/api/tokens', async (req, res) => {
 
       // Step 2 — resolve metadata for all mints in one batch call
 
-      const filtered = accounts.filter((t) => t.amount > 0);
+      const filtered = accounts.filter((t) => BigInt(t.amount) > 0n);
       const metadataMap = await resolveTokenMetadata(filtered.map((t) => t.mint));
+
+      // Stage 2 — Jupiter fallback only for mints Helius couldn't price
+      const missingAfterHelius = filtered
+        .map((t) => t.mint)
+        .filter((mint) => !metadataMap.get(mint)?.priceUsd);
+      const jupiterPrices = await resolveJupiterPrices(missingAfterHelius);
+
+      // Stage 3 — Raydium fallback only for mints still unpriced after Jupiter
+      const missingAfterJupiter = missingAfterHelius.filter((mint) => !jupiterPrices.has(mint));
+      const raydiumPrices = await resolveRaydiumPrices(missingAfterJupiter);
 
       mappedTokens = filtered
         .map((t) => {
           const meta = metadataMap.get(t.mint);
           const decimals = meta?.decimals ?? 0;
+          const price =
+            meta?.priceUsd ??
+            jupiterPrices.get(t.mint)?.priceUsd ??
+            raydiumPrices.get(t.mint)?.priceUsd ??
+            null;
+          const priceSource =
+            meta?.priceSource ||
+            jupiterPrices.get(t.mint)?.priceSource ||
+            raydiumPrices.get(t.mint)?.priceSource ||
+            null;
+
           return {
             mint: t.mint,
-            amount: t.amount / Math.pow(10, decimals), // fixes raw-base-unit display bug
+            amount: rawAmountToDecimal(t.amount, decimals), // now a String — safe for JSON transport
             symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
             name: meta?.name || null,
             logoURI: meta?.logoURI || null,
-            priceUsd: meta?.priceUsd ?? null, // from Helius directly — no CoinGecko round-trip
+            priceUsd: price,
+            priceSource,
           };
         })
-        .filter((t) => t.amount > 0); // guard against rounding to 0 on extreme-decimal tokens
+        .filter((t) => parseFloat(t.amount) > 0);
 
       res.json({ tokens: mappedTokens });
     } else if (SHYFT_API_KEY) {

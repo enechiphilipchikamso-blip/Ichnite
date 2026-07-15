@@ -239,10 +239,15 @@ main {
   margin: 0 auto;
 }
 
+#results > * {
+  min-width: 0;
+}
+
 .card {
   background-color: var(--card-bg);
   border-radius: 20px;
   padding: 20px;
+  margin-bottom: 6px;
   width: 100%;
   min-width: 0;
   overflow-x: hidden;

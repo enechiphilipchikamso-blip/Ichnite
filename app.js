@@ -289,6 +289,23 @@ function getTokenColor(symbol) {
   return TOKEN_COLORS[symbol?.toUpperCase()] || TOKEN_COLORS.DEFAULT;
 }
 
+// Deterministic color for tokens outside the static brand map — same mint always gets the same color
+function hashMintToColor(mint) {
+  let hash = 0;
+  for (let i = 0; i < mint.length; i++) {
+    hash = mint.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 65%, 60%)`;
+}
+
+function getTokenColorSafe(token) {
+  const staticColor = TOKEN_COLORS[token.symbol?.toUpperCase()];
+  return staticColor && staticColor !== TOKEN_COLORS.DEFAULT
+    ? staticColor
+    : hashMintToColor(token.mint);
+}
+
 // Improvement 3: Get verified CoinGecko ID by symbol
 function getCoinGeckoId(symbol) {
   return COINGECKO_IDS[symbol?.toUpperCase()] || null;
@@ -795,7 +812,7 @@ tokenPrices = data && typeof data === 'object' ? data : {};
 
 function getTokenUsdValue(token) {
   if (token.priceUsd === null || token.priceUsd === undefined) return 0;
-  return (token.amount || 0) * token.priceUsd;
+  return (parseFloat(token.amount) || 0) * token.priceUsd;
 }
 
 function hasKnownPrice(token) {
@@ -1044,7 +1061,7 @@ function drawPieChart(tokens, totalValue) {
   show(pieSpinner);
 
   const labels = tokens.map(t => t.symbol || 'Unknown');
-  const values = tokens.map(t => parseFloat(t.amount) || 0); // amount-based, decoupled from price availability
+  const values = tokens.map(t => parseFloat(t.amount) || 0); // amount is now a String — parseFloat still required, unchanged
   const colors = tokens.map(t => getTokenColor(t.symbol));
   const amountTotal = values.reduce((a, b) => a + b, 0);
 
