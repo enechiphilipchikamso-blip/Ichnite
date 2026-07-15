@@ -241,7 +241,7 @@ async function resolveTokenMetadata(mints) {
               method: 'getAssetBatch',
               params: {
                 ids: chunk,
-                displayOptions: { showFungible: true }, // REQUIRED for token_info/price_info
+                 displayOptions: { showFungibleTokens: true }, // REQUIRED for token_info/price_info
               },
             }),
           }
