@@ -1868,4 +1868,4 @@ window.addEventListener('online', () => {
 // ── 31. INITIALIZATION ──
 // ════════════════════════════════════════
 
-renderSearchHistory(); 
+renderSearchHistory();

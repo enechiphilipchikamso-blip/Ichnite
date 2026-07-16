@@ -231,7 +231,7 @@ async function resolveTokenMetadata(mints) {
     chunks.map(async (chunk) => {
       try {
         const data = await safeFetch(
-          `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+          `https://beta.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -241,7 +241,7 @@ async function resolveTokenMetadata(mints) {
               method: 'getAssetBatch',
               params: {
                 ids: chunk,
-                 displayOptions: { showFungibleTokens: true }, // REQUIRED for token_info/price_info
+                displayOptions: { showFungible: true }, // REQUIRED for token_info/price_info
               },
             }),
           }
@@ -394,7 +394,7 @@ app.get('/api/tokens', async (req, res) => {
     if (HELIUS_API_KEY) {
       // Step 1 — get raw token accounts (mint, amount, owner only)
       const data = await safeFetch(
-        `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+        `https://beta.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -548,7 +548,7 @@ app.get('/api/transactions', async (req, res) => {
 
   if (!isValidSolanaAddress(address)) {
     return res.status(400).json({ error: 'Invalid Solana wallet address.' });
-  }
+  } 
 
   try {
     let data;
@@ -583,41 +583,6 @@ app.get('/api/transactions', async (req, res) => {
     console.error('Transaction error:', error.message);
     res.status(503).json({
       error: 'Unable to fetch transactions. Solana network may be experiencing delays.',
-    });
-  }
-});
-
-
-
-// ── Route 7 — GET /api/token-logos?symbol= ──
-// Fetches token logo URL from CoinGecko by symbol
-app.get('/api/token-logos', async (req, res) => {
-  const { symbol } = req.query;
-
-  if (!symbol) {
-    return res.status(400).json({ error: 'Token symbol is required.' });
-  }
-
-  try {
-    const url = `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(symbol)}`;
-
-    const headers = {};
-    if (COINGECKO_API_KEY) {
-      headers['x-cg-pro-api-key'] = COINGECKO_API_KEY;
-    }
-
-    const data = await safeFetch(url, { headers });
-
-    // Return only the first matching coin logo
-    const coin = data.coins?.[0];
-    res.json({
-      logo: coin?.large || coin?.thumb || null,
-      name: coin?.name || null,
-    });
-  } catch (error) {
-    console.error('Token logo error:', error.message);
-    res.status(503).json({
-      error: 'Unable to fetch token logo.',
     });
   }
 });
