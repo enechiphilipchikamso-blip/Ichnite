@@ -127,7 +127,6 @@ let liveUpdateInterval = null;
 let liveUpdateFailures = 0;
 let lastSearchTime = 0;
 let allTokens = [];
-let tokenPrices = {};
 let allTransactions = [];
 let pieChartInstance = null;
 let barChartInstance = null;
@@ -136,6 +135,7 @@ let tokenFetchFailed = false;
 let barDataAvailable = false;
 let tokenDataAvailable = false;
 let netWorthRevealed = false;
+let tokenCardRevealed = false;
 let inputValidTimeout = null;
 let failedFetchCount = 0;
 
@@ -179,6 +179,7 @@ const tokenList = document.getElementById('tokenList');
 const tokenTotalValue = document.getElementById('tokenTotalValue');
 const tokenSearch = document.getElementById('tokenSearch');
 const tokenSort = document.getElementById('tokenSort');
+const tokenTotalSkeleton = document.getElementById('tokenTotalSkeleton');
 const wrapper = document.querySelector('.select-wrapper');
 const pieSkeleton = document.getElementById('pieSkeleton');
 const pieSpinner = document.getElementById('pieSpinner');
@@ -279,10 +280,10 @@ function calculateWalletAge(transactions) {
   const years = Math.floor(diffDays / 365);
   const months = Math.floor((diffDays % 365) / 30);
   const days = diffDays % 30;
-  if (years > 0 && months > 0) return `Wallet age: ${years} year${years > 1 ? 's' : ''} ${months} month${months > 1 ? 's' : ''}`;
-  if (years > 0) return `Wallet age: ${years} year${years > 1 ? 's' : ''}`;
-  if (months > 0) return `Wallet age: ${months} month${months > 1 ? 's' : ''}`;
-  return `Wallet age: ${days} day${days > 1 ? 's' : ''}`;
+  if (years > 0 && months > 0) return `${years} year${years > 1 ? 's' : ''} ${months} month${months > 1 ? 's' : ''}`;
+  if (years > 0) return `${years} year${years > 1 ? 's' : ''}`;
+  if (months > 0) return `${months} month${months > 1 ? 's' : ''}`;
+  return `${days} day${days > 1 ? 's' : ''}`;
 }
 
 function getTokenColor(symbol) {
@@ -486,7 +487,7 @@ function showAllSkeletons() {
   hide(solBalanceRow);
   hide(walletAgeEl);
   show(tokenSkeleton);
-  show(document.getElementById('tokenTotalSkeleton'));
+  show(tokenTotalSkeleton);
   hide(tokenList);
   hide(tokenTotalValue);
   show(pieSkeleton);
@@ -542,7 +543,6 @@ function resetAll() {
   currentSolPrice = 0;
   currentSolBalance = 0;
   allTokens = [];
-  tokenPrices = {};
   allTransactions = [];
   hideAllMessages();
   hide(resultsSection);
@@ -632,7 +632,6 @@ async function handleSearch() {
   setSearchLoading(true);
   showAllSkeletons();
   
-  /* hideFloatingLogos(); */
   
     /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
   document.title = 'SolTrace — Wallet Results';
@@ -652,6 +651,7 @@ async function handleSearch() {
     barDataAvailable = false;
     tokenDataAvailable = false;
     netWorthRevealed = false;
+    tokenCardRevealed = false;
     failedFetchCount = 0;
     
   const results = await Promise.allSettled([
@@ -727,12 +727,13 @@ async function fetchSolBalance(address) {
     hide(solSkeleton);
     hide(solBalanceRow);
     hide(document.getElementById('solEmptyMsg'));
+    hide(document.getElementById('solMarketSection'));
+    hide(document.getElementById('walletAgeRow'));
     document.getElementById('solBalanceError')?.remove();
     const solErrorMsg = document.createElement('p');
     solErrorMsg.id = 'solBalanceError';
     solErrorMsg.className = 'empty-msg';
     solErrorMsg.textContent = 'Unable to load SOL balance';
-    // Insert only within the balance row's position — never touches Market/Wallet Age
     solBalanceRow.insertAdjacentElement('afterend', solErrorMsg);
   }
 }
@@ -752,6 +753,7 @@ async function fetchTokens(address) {
     if (allTokens.length === 0) {
       tokenDataAvailable = false;
       hideSkeletonShowContent(tokenSkeleton, tokenList);
+      hide(tokenTotalSkeleton);
       hide(pieSkeleton);
       hide(pieSpinner);
       const msg = document.createElement('p');
@@ -773,6 +775,7 @@ async function fetchTokens(address) {
     failedFetchCount++;
     console.error('Token error:', error);
     hideSkeletonShowContent(tokenSkeleton, tokenList);
+    hide(tokenTotalSkeleton);
     hide(pieSkeleton);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
@@ -811,12 +814,12 @@ tokenPrices = data && typeof data === 'object' ? data : {};
     }
 
 function getTokenUsdValue(token) {
-  if (token.priceUsd === null || token.priceUsd === undefined) return 0;
+  if (token.priceUnavailable || token.priceUsd === null || token.priceUsd === undefined) return 0;
   return (parseFloat(token.amount) || 0) * token.priceUsd;
 }
 
 function hasKnownPrice(token) {
-  return token.priceUsd !== null && token.priceUsd !== undefined;
+  return !token.priceUnavailable && token.priceUsd !== null && token.priceUsd !== undefined;
 }
 
 // Shared row-builder — used by both full render and sort-only reorder
@@ -827,8 +830,6 @@ function buildTokenRowsFragment(sortedTokens) {
     const symbol = token.symbol || 'Unknown';
     const amount = parseFloat(token.amount || 0).toFixed(4);
     const usdValue = getTokenUsdValue(token);
-    const change = getTokenPriceChange(token);
-    const changeClass = change >= 0 ? 'gain' : 'loss';
     const color = getTokenColor(symbol);
 
     const row = document.createElement('div');
@@ -861,7 +862,7 @@ function buildTokenRowsFragment(sortedTokens) {
 
     const valueSpan = document.createElement('span');
     valueSpan.className = 'token-value';
-    valueSpan.textContent = formatUSD(usdValue);
+    valueSpan.textContent = token.priceUnavailable ? 'Unpriced' : formatUSD(usdValue);
 
     row.appendChild(img);
     row.appendChild(infoCol);
@@ -887,7 +888,7 @@ function renderTokenList(tokens) {
 
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
   
-  hide(document.getElementById('tokenTotalSkeleton'));
+  hide(tokenTotalSkeleton);
   tokenTotalValue.textContent = formatUSD(totalValue);
   show(tokenTotalValue);
 
@@ -907,7 +908,10 @@ function renderTokenList(tokens) {
   }
 
   hideSkeletonShowContent(tokenSkeleton, tokenList);
-  revealCard(tokenList.closest('.card'));
+  if (!tokenCardRevealed) {
+    revealCard(tokenList.closest('.card'));
+    tokenCardRevealed = true;
+  }
   drawPieChart(sorted, totalValue);
   updateNetWorth();
 }
@@ -1102,10 +1106,13 @@ function drawPieChart(tokens, totalValue) {
             align: 'center',
             labels: {
               color: '#7c5cfc',
-              font: { family: 'Space Grotesk', size: 12 },
+              font: {
+                family: 'Space Grotesk',
+                size: 12,
+              },
               padding: 16,
-              usePointStyle: true,
-              pointStyleWidth: 10,
+              boxWidth: 12,
+              boxHeight: 12,
             },
           },
           tooltip: {
@@ -1149,6 +1156,7 @@ async function fetchNFTs(address) {
     const nfts = data.nfts || [];
 
     if (nfts.length === 0) {
+      nftGrid.replaceChildren(); // clear stale images from a previous successful search
       hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
       const msg = document.createElement('p');
       msg.className = 'empty-msg';
@@ -1702,7 +1710,6 @@ async function fetchLivePrices() {
     currentSolPrice = priceData.price || 0;
     const change = priceData.change24h || 0;
 
-    // Only these three refresh live, per spec: USD balance, price, 24h change
     solPriceEl.textContent = formatUSD(currentSolPrice);
     const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
     solPriceChange.textContent = changeFormatted;
@@ -1711,8 +1718,29 @@ async function fetchLivePrices() {
       solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
     }
 
+    // Live Jupiter-only price refresh — Raydium deliberately excluded here per its
+// own docs ("not suitable for real-time tracking"); Raydium only runs once,
+// at initial search time, via the full /api/tokens route.
+    if (allTokens.length > 0) {
+      const mintList = allTokens.map(t => t.mint).filter(Boolean).join(',');
+      const priceRes = await fetch(`${API_BASE}/api/token-prices-live?mints=${mintList}`);
+      if (priceRes.ok) {
+        const { prices, unpriced } = await priceRes.json();
+        let updated = false;
+        allTokens.forEach(t => {
+          if (prices[t.mint] !== undefined) {
+            t.priceUsd = prices[t.mint];
+            t.priceUnavailable = false;
+            updated = true;
+          } else if (unpriced?.includes(t.mint)) {
+            t.priceUnavailable = true;
+          }
+        });
+        if (updated) renderTokenList(allTokens);
+      }
+    }
+
     updateNetWorth();
-    
   } catch (error) {
   if (error.name === 'AbortError') return;
 
@@ -1840,4 +1868,4 @@ window.addEventListener('online', () => {
 // ── 31. INITIALIZATION ──
 // ════════════════════════════════════════
 
-renderSearchHistory();
+renderSearchHistory(); 

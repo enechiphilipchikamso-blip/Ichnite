@@ -262,8 +262,7 @@ async function resolveTokenMetadata(mints) {
             name: meta.name || null,
             logoURI: image,
             decimals: typeof tokenInfo.decimals === 'number' ? tokenInfo.decimals : 0,
-            priceUsd: tokenInfo.price_info?.price_per_token ?? null,
-            priceSource: tokenInfo.price_info?.price_per_token != null ? 'helius' : null,
+            // Metadata only — pricing now comes exclusively from Jupiter (primary) / Raydium (fallback)
           });
         }
       } catch (err) {
@@ -276,34 +275,44 @@ async function resolveTokenMetadata(mints) {
 }
 
 // Stage 2 — Jupiter Price V3 fallback (max 50 ids per request, confirmed via official docs)
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function resolveJupiterPrices(mints) {
   const priceMap = new Map();
-  if (mints.length === 0 || !JUPITER_API_KEY) return priceMap;
+  if (mints.length === 0) return priceMap;
 
-  const CHUNK_SIZE = 50; // Jupiter's documented per-request limit
+  const hasKey = !!JUPITER_API_KEY;
+  const baseUrl = hasKey ? 'https://api.jup.ag/price/v3' : 'https://lite-api.jup.ag/price/v3';
+  const CHUNK_SIZE = 50; // Jupiter's documented per-request limit, both modes
+  const CHUNK_DELAY_MS = hasKey ? 1000 : 2000; // 1 RPS keyed / 0.5 RPS keyless — confirmed via dev.jup.ag/docs/portal/plans
+
+  console.log(`[Jupiter] Running in ${hasKey ? 'KEYED (1 req/sec)' : 'KEYLESS (0.5 req/sec)'} mode`);
+
   const chunks = [];
   for (let i = 0; i < mints.length; i += CHUNK_SIZE) {
     chunks.push(mints.slice(i, i + CHUNK_SIZE));
   }
 
-  await Promise.allSettled(
-    chunks.map(async (chunk) => {
-      try {
-        const data = await safeFetch(
-          `https://api.jup.ag/price/v3?ids=${chunk.join(',')}`,
-          { headers: { 'x-api-key': JUPITER_API_KEY } }
-        );
-        // Jupiter omits unpriced tokens entirely — no key present, not null
-        for (const mint of chunk) {
-          if (data[mint] && typeof data[mint].usdPrice === 'number') {
-            priceMap.set(mint, { priceUsd: data[mint].usdPrice, priceSource: 'jupiter' });
-          }
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    try {
+      const options = hasKey ? { headers: { 'x-api-key': JUPITER_API_KEY } } : {};
+      const data = await safeFetch(`${baseUrl}?ids=${chunk.join(',')}`, options);
+      for (const mint of chunk) {
+        if (data[mint] && typeof data[mint].usdPrice === 'number') {
+          priceMap.set(mint, { priceUsd: data[mint].usdPrice, priceSource: 'jupiter' });
         }
-      } catch (err) {
-        console.error('Jupiter price batch error:', err.message);
       }
-    })
-  );
+    } catch (err) {
+      console.error('Jupiter price batch error:', err.message);
+    }
+
+    if (i < chunks.length - 1) {
+      await sleep(CHUNK_DELAY_MS);
+    }
+  }
 
   return priceMap;
 }
@@ -330,8 +339,48 @@ async function resolveRaydiumPrices(mints) {
   return priceMap;
 }
 
+
+
+// Lightweight live-price-only endpoint — Jupiter only, no Raydium, no metadata re-fetch.
+// Used for the 60-second refresh cycle so we don't repeatedly hit Raydium's
+// fallback-only, non-real-time API on every tick (per Raydium's own docs).
+app.get('/api/token-prices-live', async (req, res) => {
+  const { mints } = req.query;
+
+  if (!mints) {
+    return res.status(400).json({ error: 'Mint addresses are required.' });
+  }
+
+  try {
+    const mintList = mints.split(',').filter(Boolean);
+    const jupiterPrices = await resolveJupiterPrices(mintList);
+
+    // Raydium /mint/price confirmed sanctioned for UI rendering at this cadence
+    // (docs.raydium.io/sdk-api/rest-api: "fine for UI rendering; never loop it in a bot")
+    const missingAfterJupiter = mintList.filter((mint) => !jupiterPrices.has(mint));
+    const raydiumPrices = await resolveRaydiumPrices(missingAfterJupiter);
+
+    const prices = {};
+    const unpriced = [];
+    for (const mint of mintList) {
+      const price = jupiterPrices.get(mint)?.priceUsd ?? raydiumPrices.get(mint)?.priceUsd ?? null;
+      if (price !== null) {
+        prices[mint] = price;
+      } else {
+        unpriced.push(mint);
+      }
+    }
+
+    res.json({ prices, unpriced });
+  } catch (error) {
+    console.error('Live price error:', error.message);
+    res.status(503).json({ error: 'Unable to fetch live prices.' });
+  }
+});
+
 // ── Route 3 — GET /api/tokens?address= ──
 // Fetches SPL token holdings from Helius or Shyft
+
 app.get('/api/tokens', async (req, res) => {
   const { address } = req.query;
 
@@ -365,16 +414,16 @@ app.get('/api/tokens', async (req, res) => {
       // Step 2 — resolve metadata for all mints in one batch call
 
       const filtered = accounts.filter((t) => BigInt(t.amount) > 0n);
-      const metadataMap = await resolveTokenMetadata(filtered.map((t) => t.mint));
+      const mints = filtered.map((t) => t.mint);
 
-      // Stage 2 — Jupiter fallback only for mints Helius couldn't price
-      const missingAfterHelius = filtered
-        .map((t) => t.mint)
-        .filter((mint) => !metadataMap.get(mint)?.priceUsd);
-      const jupiterPrices = await resolveJupiterPrices(missingAfterHelius);
+      // Stage 1 — Helius: metadata ONLY (name, symbol, logo, decimals) — no pricing
+      const metadataMap = await resolveTokenMetadata(mints);
 
-      // Stage 3 — Raydium fallback only for mints still unpriced after Jupiter
-      const missingAfterJupiter = missingAfterHelius.filter((mint) => !jupiterPrices.has(mint));
+      // Stage 2 — Jupiter: primary live pricing for EVERY mint
+      const jupiterPrices = await resolveJupiterPrices(mints);
+
+      // Stage 3 — Raydium: fallback only for mints Jupiter omitted
+      const missingAfterJupiter = mints.filter((mint) => !jupiterPrices.has(mint));
       const raydiumPrices = await resolveRaydiumPrices(missingAfterJupiter);
 
       mappedTokens = filtered
@@ -382,24 +431,25 @@ app.get('/api/tokens', async (req, res) => {
           const meta = metadataMap.get(t.mint);
           const decimals = meta?.decimals ?? 0;
           const price =
-            meta?.priceUsd ??
             jupiterPrices.get(t.mint)?.priceUsd ??
             raydiumPrices.get(t.mint)?.priceUsd ??
             null;
           const priceSource =
-            meta?.priceSource ||
             jupiterPrices.get(t.mint)?.priceSource ||
             raydiumPrices.get(t.mint)?.priceSource ||
             null;
 
           return {
             mint: t.mint,
-            amount: rawAmountToDecimal(t.amount, decimals), // now a String — safe for JSON transport
+            amount: rawAmountToDecimal(t.amount, decimals), // BigInt-safe
             symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
             name: meta?.name || null,
             logoURI: meta?.logoURI || null,
             priceUsd: price,
             priceSource,
+            // Explicitly checked all three tiers and found nothing — e.g. still on a
+            // Pump.fun bonding curve. Distinct from "haven't checked yet" states elsewhere.
+            priceUnavailable: price === null,
           };
         })
         .filter((t) => parseFloat(t.amount) > 0);
@@ -429,6 +479,7 @@ app.get('/api/tokens', async (req, res) => {
     });
   }
 });
+
 
 // ── Route 4 — GET /api/nfts?address= ──
 // Fetches NFT holdings from Helius or Shyft
@@ -536,34 +587,7 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
-// ── Route 6 — GET /api/token-prices?ids= ──
-// Fetches live USD prices for multiple tokens from CoinGecko
-// ids = comma separated CoinGecko token ids e.g. jupiter-ag,usd-coin
-app.get('/api/token-prices', async (req, res) => {
-  const { ids } = req.query;
 
-  if (!ids) {
-    return res.status(400).json({ error: 'Token ids are required.' });
-  }
-
-  try {
-    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${encodeURIComponent(ids)}&vs_currencies=usd&include_24hr_change=true`;
-
-    const headers = {};
-    if (COINGECKO_API_KEY) {
-      headers['x-cg-pro-api-key'] = COINGECKO_API_KEY;
-    }
-
-    const data = await safeFetch(url, { headers });
-
-    res.json(data);
-  } catch (error) {
-    console.error('Token price error:', error.message);
-    res.status(503).json({
-      error: 'Unable to fetch token prices. Please try again shortly.',
-    });
-  }
-});
 
 // ── Route 7 — GET /api/token-logos?symbol= ──
 // Fetches token logo URL from CoinGecko by symbol
