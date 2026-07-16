@@ -262,6 +262,7 @@ async function resolveTokenMetadata(mints) {
             name: meta.name || null,
             logoURI: image,
             decimals: typeof tokenInfo.decimals === 'number' ? tokenInfo.decimals : 0,
+            interface: asset.interface || null,
             // Metadata only — pricing now comes exclusively from Jupiter (primary) / Raydium (fallback)
           });
         }
@@ -413,11 +414,29 @@ app.get('/api/tokens', async (req, res) => {
 
       // Step 2 — resolve metadata for all mints in one batch call
 
-      const filtered = accounts.filter((t) => BigInt(t.amount) > 0n);
-      const mints = filtered.map((t) => t.mint);
+      const preFilter = accounts.filter((t) => BigInt(t.amount) > 0n);
+      const preMints = preFilter.map((t) => t.mint);
 
-      // Stage 1 — Helius: metadata ONLY (name, symbol, logo, decimals) — no pricing
-      const metadataMap = await resolveTokenMetadata(mints);
+      // Stage 1 — Helius: metadata ONLY (name, symbol, logo, decimals, interface) — no pricing
+      const metadataMap = await resolveTokenMetadata(preMints);
+
+      // getTokenAccounts returns NFTs too — on Solana an NFT is just a token account
+      // with supply 1 / decimals 0, no on-chain distinction at that layer. Filter them
+      // out here using the `interface` field Helius resolves for each mint.
+      const NFT_INTERFACES = new Set([
+        'V1_NFT',
+        'V2_NFT',
+        'V1_PRINT',
+        'LEGACY_NFT',
+        'ProgrammableNFT',
+        'MplCoreAsset',
+        'MplCoreCollection',
+      ]);
+      const filtered = preFilter.filter((t) => {
+        const iface = metadataMap.get(t.mint)?.interface;
+        return !iface || !NFT_INTERFACES.has(iface);
+      });
+      const mints = filtered.map((t) => t.mint);
 
       // Stage 2 — Jupiter: primary live pricing for EVERY mint
       const jupiterPrices = await resolveJupiterPrices(mints);
