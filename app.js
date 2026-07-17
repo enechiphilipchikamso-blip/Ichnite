@@ -1722,8 +1722,12 @@ async function fetchLivePrices() {
 // own docs ("not suitable for real-time tracking"); Raydium only runs once,
 // at initial search time, via the full /api/tokens route.
     if (allTokens.length > 0) {
-      const mintList = allTokens.map(t => t.mint).filter(Boolean).join(',');
-      const priceRes = await fetch(`${API_BASE}/api/token-prices-live?mints=${mintList}`);
+      const mintList = allTokens.map(t => t.mint).filter(Boolean);
+      const priceRes = await fetch(`${API_BASE}/api/token-prices-live`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mints: mintList }),
+      });
       if (priceRes.ok) {
         const { prices, unpriced } = await priceRes.json();
         let updated = false;

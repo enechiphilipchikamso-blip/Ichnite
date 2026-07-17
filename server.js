@@ -86,7 +86,7 @@ const corsOptions = {
     console.error(`❌ Blocked CORS request from origin: ${origin}`);  
     return callback(new Error('Not allowed by CORS'));  
   },  
-  methods: ['GET'],  
+  methods: ['GET', 'POST'],  
   allowedHeaders: ['Content-Type'],  
 };  
   
@@ -323,18 +323,27 @@ async function resolveRaydiumPrices(mints) {
   const priceMap = new Map();
   if (mints.length === 0) return priceMap;
 
-  try {
-    const data = await safeFetch(
-      `https://api-v3.raydium.io/mint/price?mints=${mints.join(',')}`
-    );
-    const prices = data?.data || {};
-    for (const mint of mints) {
-      if (prices[mint]) {
-        priceMap.set(mint, { priceUsd: parseFloat(prices[mint]), priceSource: 'raydium' });
+  const CHUNK_SIZE = 100; // keeps each query string well under URL length limits
+  const chunks = [];
+  for (let i = 0; i < mints.length; i += CHUNK_SIZE) {
+    chunks.push(mints.slice(i, i + CHUNK_SIZE));
+  }
+
+  for (const chunk of chunks) {
+    try {
+      const data = await safeFetch(
+        `https://api-v3.raydium.io/mint/price?mints=${chunk.join(',')}`
+      );
+      const prices = data?.data || {};
+      for (const mint of chunk) {
+        if (prices[mint]) {
+          priceMap.set(mint, { priceUsd: parseFloat(prices[mint]), priceSource: 'raydium' });
+        }
       }
+    } catch (err) {
+      console.error('Raydium price batch error:', err.message);
+      // One bad chunk no longer wipes out pricing for every other mint
     }
-  } catch (err) {
-    console.error('Raydium price error:', err.message);
   }
 
   return priceMap;
@@ -345,15 +354,15 @@ async function resolveRaydiumPrices(mints) {
 // Lightweight live-price-only endpoint — Jupiter only, no Raydium, no metadata re-fetch.
 // Used for the 60-second refresh cycle so we don't repeatedly hit Raydium's
 // fallback-only, non-real-time API on every tick (per Raydium's own docs).
-app.get('/api/token-prices-live', async (req, res) => {
-  const { mints } = req.query;
+app.post('/api/token-prices-live', async (req, res) => {
+  const { mints } = req.body;
 
-  if (!mints) {
+  if (!Array.isArray(mints) || mints.length === 0) {
     return res.status(400).json({ error: 'Mint addresses are required.' });
   }
 
   try {
-    const mintList = mints.split(',').filter(Boolean);
+    const mintList = mints.filter(Boolean);
     const jupiterPrices = await resolveJupiterPrices(mintList);
 
     // Raydium /mint/price confirmed sanctioned for UI rendering at this cadence
