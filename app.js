@@ -1004,11 +1004,12 @@ if (tokenSearch) {
   });
 }
 
-tokenList.addEventListener('scroll', () => {
+const tokenListWrapper = document.querySelector('.token-list-scroll-wrapper');
+tokenListWrapper.addEventListener('scroll', () => {
   const fadeEl = document.getElementById('tokenScrollFade');
-  if (!fadeEl || fadeEl.classList.contains('hidden') === undefined) return;
-  const nearBottom = tokenList.scrollTop + tokenList.clientHeight >= tokenList.scrollHeight - 8;
-  const hasOverflow = tokenList.scrollHeight > tokenList.clientHeight;
+  if (!fadeEl) return;
+  const nearBottom = tokenListWrapper.scrollTop + tokenListWrapper.clientHeight >= tokenListWrapper.scrollHeight - 8;
+  const hasOverflow = tokenListWrapper.scrollHeight > tokenListWrapper.clientHeight;
   if (!hasOverflow || nearBottom) {
     hide(fadeEl);
   } else {
@@ -1780,7 +1781,7 @@ function updateNetWorth() {
     const msg = document.createElement('p');
     msg.id = 'netWorthError';
     msg.className = 'empty-msg';
-    msg.textContent = 'Unable to calculate';
+    msg.textContent = 'Unable to load total net worth';
     totalNetWorth.appendChild(msg);
     return;
   }
@@ -1804,7 +1805,7 @@ function updateNetWorth() {
   } catch (error) {
     console.error('Net worth error:', error);
     hide(netWorthSkeleton);
-    netWorthValue.textContent = 'Unable to calculate';
+    netWorthValue.textContent = 'Unable to load total net worth';
     show(netWorthLabel);
     show(netWorthValue);
   }
