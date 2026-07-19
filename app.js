@@ -30,38 +30,6 @@ const CONFIG = Object.freeze({
 // Verified from coingecko.com URLs
 // ════════════════════════════════════════
 
-const COINGECKO_IDS = Object.freeze({
-  // Symbol to CoinGecko ID mapping
-  SOL: 'solana',
-  JUP: 'jupiter',
-  JTO: 'jito',
-  BONK: 'bonk',
-  WIF: 'dogwifhat',
-  POPCAT: 'popcat',
-  PENGU: 'pudgy-penguins',
-  FARTCOIN: 'fartcoin',
-  AI16Z: 'ai16z',
-  GIGA: 'gigachad-2',
-  TRUMP: 'official-trump',
-  MELANIA: 'melania-meme',
-  BOME: 'book-of-meme',
-  MEW: 'mew',
-  PNUT: 'peanut-the-squirrel',
-  DRIFT: 'drift-protocol',
-  KMNO: 'kamino',
-  ORCA: 'orca',
-  RAY: 'raydium',
-  MNDE: 'marinade',
-  TNSR: 'tensor',
-  W: 'wormhole',
-  HNT: 'helium',
-  MOBILE: 'helium-mobile',
-  ARC: 'arcium',
-  GRASS: 'grass',
-  USDC: 'usd-coin',
-  USDT: 'tether',
-  PYTH: 'pyth-network',
-});
 
 // ════════════════════════════════════════
 // ── 3. TOKEN BRAND COLORS ──
@@ -136,6 +104,9 @@ let barDataAvailable = false;
 let tokenDataAvailable = false;
 let netWorthRevealed = false;
 let tokenCardRevealed = false;
+let solBalanceFailed = false;
+let solPriceFailed = false;
+let solAgeFailed = false;
 let inputValidTimeout = null;
 let failedFetchCount = 0;
 
@@ -483,13 +454,16 @@ function showAllSkeletons() {
   show(netWorthLabel);
   hide(netWorthValue);
   show(solSkeleton);
-  hide(solPriceRow);
+  hide(document.getElementById('solMarketSection'));
+  hide(document.getElementById('walletAgeRow'));
   hide(solBalanceRow);
-  hide(walletAgeEl);
+  hide(document.getElementById('solEmptyMsg'));
+  document.getElementById('solCardFullError')?.remove();
   show(tokenSkeleton);
   show(tokenTotalSkeleton);
   hide(tokenList);
   hide(tokenTotalValue);
+  hide(document.getElementById('tokenScrollFade'));
   show(pieSkeleton);
   hide(pieSpinner);
   hide(pieChart);
@@ -652,6 +626,9 @@ async function handleSearch() {
     tokenDataAvailable = false;
     netWorthRevealed = false;
     tokenCardRevealed = false;
+    solBalanceFailed = false;
+    solPriceFailed = false;
+    solAgeFailed = false;
     failedFetchCount = 0;
     
   const results = await Promise.allSettled([
@@ -683,28 +660,53 @@ async function handleSearch() {
 
 async function fetchSolBalance(address) {
   document.getElementById('solBalanceError')?.remove();
-  try {
-    const signal = currentAbortController?.signal;
-    const [priceRes, balanceRes] = await Promise.all([
-      fetch(`${API_BASE}/api/sol-price`, { signal }),
-      fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
-    ]);
+  document.getElementById('solPriceError')?.remove();
+  document.getElementById('solCardFullError')?.remove();
+  const signal = currentAbortController?.signal;
 
-    const priceData = await handleResponse(priceRes);
-    const balanceData = await handleResponse(balanceRes);
+  const [priceResult, balanceResult] = await Promise.allSettled([
+    fetch(`${API_BASE}/api/sol-price`, { signal }),
+    fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
+  ]);
 
-    currentSolPrice = priceData.price || 0;
+  if (signal?.aborted) return; // superseded by a newer call — that call owns the UI now
+
+  const priceUnreachable = priceResult.status === 'rejected';
+  const balanceUnreachable = balanceResult.status === 'rejected';
+
+  hide(solSkeleton);
+
+  // Both requests failed at the NETWORK level — backend itself is unreachable.
+  // Treat as one full-card failure, skip all per-section granularity entirely.
+  if (priceUnreachable && balanceUnreachable) {
+    solBalanceFailed = true;
+    solPriceFailed = true;
+    solFetchFailed = true; // legacy flag — still read by updateNetWorth()
+    failedFetchCount++;
+
+    hide(solBalanceRow);
+    hide(document.getElementById('solEmptyMsg'));
+    hide(document.getElementById('solMarketSection'));
+    hide(document.getElementById('walletAgeRow'));
+
+    const err = document.createElement('p');
+    err.id = 'solBalanceError';
+    err.className = 'empty-msg';
+    err.textContent = 'Unable to load SOL balance';
+    solBalanceRow.insertAdjacentElement('afterend', err);
+
+    revealCard(solBalanceRow.closest('.card'));
+    return;
+  }
+
+  // Past this point, the backend IS reachable — apply independent per-section logic.
+  solFetchFailed = false;
+
+  // ── Balance section ──
+  if (balanceResult.status === 'fulfilled' && balanceResult.value.ok) {
+    const balanceData = await balanceResult.value.json();
     currentSolBalance = balanceData.balance || 0;
-    const change = priceData.change24h || 0;
-    const usdValue = currentSolBalance * currentSolPrice;
-
-    if (solLogo?.dataset.src) solLogo.src = solLogo.dataset.src;
-
-    solPriceEl.textContent = formatUSD(currentSolPrice);
-    const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-    solPriceChange.textContent = changeFormatted;
-    solPriceChange.className = 'sol-change ' + (change >= 0 ? 'gain' : 'loss');
-    show(document.getElementById('solMarketSection'));
+    solBalanceFailed = false;
 
     if (currentSolBalance === 0) {
       hide(solBalanceRow);
@@ -712,30 +714,57 @@ async function fetchSolBalance(address) {
     } else {
       hide(document.getElementById('solEmptyMsg'));
       solBalanceEl.textContent = formatSOL(currentSolBalance);
-      solBalanceUsd.textContent = formatUSD(usdValue);
       show(solBalanceRow);
     }
-
-    hide(solSkeleton);
-    revealCard(solBalanceRow.closest('.card'));
-
-} catch (error) {
-    if (error.name === 'AbortError') return;
-    solFetchFailed = true;
-    failedFetchCount++;
-    console.error('SOL balance error:', error);
-    hide(solSkeleton);
+  } else {
+    solBalanceFailed = true;
+    currentSolBalance = 0;
     hide(solBalanceRow);
     hide(document.getElementById('solEmptyMsg'));
-    hide(document.getElementById('solMarketSection'));
-    hide(document.getElementById('walletAgeRow'));
-    document.getElementById('solBalanceError')?.remove();
-    const solErrorMsg = document.createElement('p');
-    solErrorMsg.id = 'solBalanceError';
-    solErrorMsg.className = 'empty-msg';
-    solErrorMsg.textContent = 'Unable to load SOL balance';
-    solBalanceRow.insertAdjacentElement('afterend', solErrorMsg);
+    hide(solBalanceUsd);
+    const err = document.createElement('p');
+    err.id = 'solBalanceError';
+    err.className = 'empty-msg';
+    err.textContent = 'Unable to load SOL balance';
+    solBalanceRow.insertAdjacentElement('afterend', err);
   }
+
+  // ── Market section — one shared placeholder, not per-value ──
+  show(document.getElementById('solMarketSection'));
+  const marketPlaceholder = document.getElementById('solMarketUnavailable');
+  const marketValuesRow1 = document.getElementById('solMarketPriceRow');
+  const marketValuesRow2 = document.getElementById('solMarketChangeRow');
+
+  if (priceResult.status === 'fulfilled' && priceResult.value.ok) {
+    const priceData = await priceResult.value.json();
+    currentSolPrice = priceData.price || 0;
+    const change = priceData.change24h || 0;
+    solPriceFailed = false;
+
+    solPriceEl.textContent = formatUSD(currentSolPrice);
+    const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    solPriceChange.textContent = changeFormatted;
+    solPriceChange.className = 'sol-change ' + (change >= 0 ? 'gain' : 'loss');
+    hide(marketPlaceholder);
+    show(marketValuesRow1);
+    show(marketValuesRow2);
+
+    if (currentSolBalance > 0) {
+      solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
+      show(solBalanceUsd);
+    } else {
+      hide(solBalanceUsd);
+    }
+  } else {
+    solPriceFailed = true;
+    solPriceChange.className = 'sol-change';
+    hide(marketValuesRow1);
+    hide(marketValuesRow2);
+    show(marketPlaceholder);
+    hide(solBalanceUsd);
+  }
+
+  revealCard(solBalanceRow.closest('.card'));
 }
 
 // ════════════════════════════════════════
@@ -763,7 +792,8 @@ async function fetchTokens(address) {
       revealCard(tokenList.closest('.card'));
       return;
     }
-
+    
+    
     // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
     renderTokenList(allTokens);
@@ -974,6 +1004,18 @@ if (tokenSearch) {
   });
 }
 
+tokenList.addEventListener('scroll', () => {
+  const fadeEl = document.getElementById('tokenScrollFade');
+  if (!fadeEl || fadeEl.classList.contains('hidden') === undefined) return;
+  const nearBottom = tokenList.scrollTop + tokenList.clientHeight >= tokenList.scrollHeight - 8;
+  const hasOverflow = tokenList.scrollHeight > tokenList.clientHeight;
+  if (!hasOverflow || nearBottom) {
+    hide(fadeEl);
+  } else {
+    show(fadeEl);
+  }
+});
+
 if (tokenSort) {
   tokenSort.addEventListener('click', () => openTokenSortOverlay());
 }
@@ -1054,32 +1096,67 @@ function openTokenSortOverlay() {
 // Improvement 4: Update chart instead of recreating when possible
 // ════════════════════════════════════════
 
+let pieChartDrawing = false;
+let currentPieSlices = [];
+
 function drawPieChart(tokens, totalValue) {
-  if (!tokens || tokens.length === 0) {
+  const priced = tokens.filter(t => hasKnownPrice(t));
+
+  if (priced.length === 0) {
     hide(pieSkeleton);
     hide(pieSpinner);
+    hide(pieChart);
     return;
   }
+
+  const sorted = [...priced].sort((a, b) => getTokenUsdValue(b) - getTokenUsdValue(a));
+  const top5 = sorted.slice(0, 5);
+  const rest = sorted.slice(5);
+
+  const slices = top5.map(t => ({
+    label: t.symbol || 'Unknown',
+    value: getTokenUsdValue(t),
+    color: getTokenColorSafe(t),
+    isOther: false,
+    amount: parseFloat(t.amount) || 0,
+    tokenCount: 1,
+  }));
+
+  if (rest.length > 0) {
+    const otherValue = rest.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
+    const otherAmount = rest.reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
+    slices.push({
+      label: 'Other',
+      value: otherValue,
+      color: '#7c5cfc', // fixed brand purple — never hashed
+      isOther: true,
+      amount: otherAmount,
+      tokenCount: rest.length,
+    });
+  }
+
+  currentPieSlices = slices;
+
+  if (pieChartDrawing) return;
+  pieChartDrawing = true;
 
   hide(pieSkeleton);
   show(pieSpinner);
 
-  const labels = tokens.map(t => t.symbol || 'Unknown');
-  const values = tokens.map(t => parseFloat(t.amount) || 0); // amount is now a String — parseFloat still required, unchanged
-  const colors = tokens.map(t => getTokenColor(t.symbol));
-  const amountTotal = values.reduce((a, b) => a + b, 0);
-
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     hide(pieSpinner);
     show(pieChart);
 
-    // Improvement 4: Update existing chart if it exists
+    const labels = currentPieSlices.map(s => s.label);
+    const values = currentPieSlices.map(s => s.value);
+    const colors = currentPieSlices.map(s => s.color);
+
     if (pieChartInstance) {
       pieChartInstance.data.labels = labels;
       pieChartInstance.data.datasets[0].data = values;
       pieChartInstance.data.datasets[0].backgroundColor = colors;
-      pieChartInstance.resize();
       pieChartInstance.update();
+      pieChartDrawing = false;
       return;
     }
 
@@ -1105,11 +1182,8 @@ function drawPieChart(tokens, totalValue) {
             position: 'bottom',
             align: 'center',
             labels: {
-              color: '#7c5cfc',
-              font: {
-                family: 'Space Grotesk',
-                size: 12,
-              },
+              color: '#7c5cfc', // uniform legend text color, never tied to swatch hash
+              font: { family: 'Space Grotesk', size: 12 },
               padding: 16,
               boxWidth: 12,
               boxHeight: 12,
@@ -1125,12 +1199,20 @@ function drawPieChart(tokens, totalValue) {
             padding: 12,
             callbacks: {
               label(context) {
-                const token = tokens[context.dataIndex];
-                const amount = values[context.dataIndex];
-                const percentage = amountTotal > 0 ? ((amount / amountTotal) * 100).toFixed(1) : '0.0';
+                const slice = currentPieSlices[context.dataIndex];
+                const total = currentPieSlices.reduce((sum, s) => sum + s.value, 0);
+                const percentage = total > 0 ? ((slice.value / total) * 100).toFixed(1) : '0.0';
+                if (slice.isOther) {
+                  return [
+                    `Tokens: ${slice.tokenCount}`,
+                    `Amount: ${slice.amount.toFixed(4)}`,
+                    `Value: ${formatUSD(slice.value)}`,
+                    `Share: ${percentage}%`,
+                  ];
+                }
                 return [
-                  `Amount: ${amount.toFixed(4)}`,
-                  hasKnownPrice(token) ? `Value: ${formatUSD(getTokenUsdValue(token))}` : 'Price unavailable',
+                  `Amount: ${slice.amount.toFixed(4)}`,
+                  `Value: ${formatUSD(slice.value)}`,
                   `Share: ${percentage}%`,
                 ];
               },
@@ -1139,8 +1221,8 @@ function drawPieChart(tokens, totalValue) {
         },
       },
     });
-    pieChartInstance.resize();
-  }, CONFIG.CHART_DRAW_DELAY);
+    pieChartDrawing = false;
+  });
 }
 
 // ════════════════════════════════════════
@@ -1328,7 +1410,11 @@ async function fetchTransactions(address) {
     allTransactions = data.transactions || [];
 
     const age = calculateWalletAge(allTransactions);
-    if (age) { walletAgeEl.textContent = age; show(document.getElementById('walletAgeRow')); }
+    if (age) {
+      walletAgeEl.textContent = age;
+      solAgeFailed = false;
+      show(document.getElementById('walletAgeRow'));
+    }
 
     if (allTransactions.length === 0) {
       barDataAvailable = false;
@@ -1350,6 +1436,9 @@ async function fetchTransactions(address) {
 
   } catch (error) {
     if (error.name === 'AbortError') return;
+    solAgeFailed = true;
+    walletAgeEl.textContent = 'Age unavailable';
+    show(document.getElementById('walletAgeRow'));
     barDataAvailable = false;
     failedFetchCount++;
     console.error('Transaction error:', error);
@@ -1370,10 +1459,22 @@ async function fetchTransactions(address) {
   }
 }
 
-function describeTransaction(tx) {
+function describeTransaction(tx, txTokenMetadata) {
   const type = tx.type?.toUpperCase() || '';
+
+  // For SPL token transfers, build our own wording from tokenTransfers +
+  // resolved metadata, rather than trusting Helius's auto-generated text —
+  // Helius sometimes embeds raw mint/pump-suffix instead of a real name.
+  if (type === 'TRANSFER' && Array.isArray(tx.tokenTransfers) && tx.tokenTransfers.length > 0) {
+    const t = tx.tokenTransfers[0];
+    const meta = txTokenMetadata?.get(t.mint);
+    const tokenLabel = meta?.symbol || truncateAddress(t.mint);
+    const from = truncateAddress(t.fromUserAccount);
+    const to = truncateAddress(t.toUserAccount);
+    return `${from} transferred ${t.tokenAmount} ${tokenLabel} to ${to}`;
+  }
+
   if (tx.description) {
-    // Truncate any full Solana addresses embedded in Helius's own description
     return tx.description.replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, (match) => truncateAddress(match));
   }
   if (type === 'TRANSFER') {
@@ -1403,7 +1504,22 @@ function getTxIconSymbol(tx) {
   return '↓';
 }
 
-function renderRecentTransactions(transactions) {
+async function renderRecentTransactions(transactions) {
+  const txMints = [...new Set(
+    transactions
+      .flatMap(tx => tx.tokenTransfers?.map(t => t.mint) || [])
+      .filter(Boolean)
+  )];
+  let txTokenMetadata = new Map();
+  if (txMints.length > 0) {
+    try {
+      const res = await fetch(`${API_BASE}/api/token-metadata?mints=${txMints.join(',')}`);
+      if (res.ok) {
+        const data = await res.json();
+        txTokenMetadata = new Map(Object.entries(data.metadata || {}));
+      }
+    } catch { /* fall through to mint-address display */ }
+  }
   if (!transactions || transactions.length === 0) {
     hideSkeletonShowContent(txSkeleton, last7txList);
     const msg = document.createElement('p');
@@ -1441,7 +1557,7 @@ function renderRecentTransactions(transactions) {
       // Transaction text
       const textSpan = document.createElement('span');
       textSpan.className = 'tx-text';
-      textSpan.textContent = describeTransaction(tx);
+      textSpan.textContent = describeTransaction(tx, txTokenMetadata);
 
       // Copy signature button — Improvement 6: addEventListener not onclick
       const copyBtn = document.createElement('button');
@@ -1701,21 +1817,31 @@ function updateNetWorth() {
 async function fetchLivePrices() {
   try {
     const res = await fetch(`${API_BASE}/api/sol-price`);
-    if (!res.ok) {
-  throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
-    }
-    const priceData = await res.json();
-    liveUpdateFailures = 0;
+    if (res.ok) {
+      const priceData = await res.json();
+      currentSolPrice = priceData.price || 0;
+      const change = priceData.change24h || 0;
+      solPriceFailed = false;
 
-    currentSolPrice = priceData.price || 0;
-    const change = priceData.change24h || 0;
-
-    solPriceEl.textContent = formatUSD(currentSolPrice);
-    const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
-    solPriceChange.textContent = changeFormatted;
-    solPriceChange.className = 'sol-change ' + (change >= 0 ? 'gain' : 'loss');
-    if (currentSolBalance > 0) {
+      solPriceEl.textContent = formatUSD(currentSolPrice);
+      const changeFormatted = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+      solPriceChange.textContent = changeFormatted;
+      solPriceChange.className = 'sol-change ' + (change >= 0 ? 'gain' : 'loss');
+      hide(document.getElementById('solMarketUnavailable'));
+      show(document.getElementById('solMarketPriceRow'));
+      show(document.getElementById('solMarketChangeRow'));
+      if (currentSolBalance > 0) {
       solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
+      show(solBalanceUsd);
+    } else {
+      hide(solBalanceUsd);
+    }
+    
+   }  else {
+      solPriceFailed = true;
+      hide(document.getElementById('solMarketPriceRow'));
+      hide(document.getElementById('solMarketChangeRow'));
+      show(document.getElementById('solMarketUnavailable'));
     }
 
     // Live Jupiter-only price refresh — Raydium deliberately excluded here per its

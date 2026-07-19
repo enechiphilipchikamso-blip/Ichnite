@@ -115,6 +115,7 @@ const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
 const SHYFT_API_KEY = process.env.SHYFT_API_KEY;
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
+const CMC_API_KEY = process.env.CMC_API_KEY;
 
 // ── Helper — validate Solana address format ──
 // Solana addresses are Base58 encoded and 32-44 characters long
@@ -141,29 +142,32 @@ async function safeFetch(url, options = {}) {
 // Fetches live SOL price and 24h percentage change from CoinGecko
 // CoinGecko free tier does not require API key
 app.get('/api/sol-price', async (req, res) => {
+  // Tier 1 — CoinGecko Demo
   try {
-    const url =
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true';
-
-    const headers = {};
-
-    // Add API key header if Pro tier key is available
-    if (COINGECKO_API_KEY) {
-      headers['x-cg-pro-api-key'] = COINGECKO_API_KEY;
-    }
-
+    const url = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd&include_24hr_change=true';
+    const headers = COINGECKO_API_KEY ? { 'x-cg-demo-api-key': COINGECKO_API_KEY } : {};
     const data = await safeFetch(url, { headers });
-
-    // Return only what frontend needs — never expose raw API response
-    res.json({
-      price: data.solana.usd,
-      change24h: data.solana.usd_24h_change,
-    });
+    if (!data.solana) {
+  throw new Error('Unexpected CoinGecko response');
+    }
+    return res.json({ price: data.solana.usd, change24h: data.solana.usd_24h_change, source: 'coingecko' });
   } catch (error) {
-    console.error('SOL price error:', error.message);
-    res.status(503).json({
-      error: 'Unable to fetch SOL price. Please try again shortly.',
-    });
+    console.warn('CoinGecko SOL price failed, trying CoinMarketCap:', error.message);
+  }
+
+  // Tier 2 — CoinMarketCap fallback
+  try {
+    if (!CMC_API_KEY) throw new Error('CMC key not configured');
+    const data = await safeFetch(
+      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=SOL',
+      { headers: { 'X-CMC_PRO_API_KEY': CMC_API_KEY } }
+    );
+    const quote = data.data?.SOL?.quote?.USD;
+    if (!quote) throw new Error('Unexpected CMC response shape');
+    return res.json({ price: quote.price, change24h: quote.percent_change_24h, source: 'coinmarketcap' });
+  } catch (error) {
+    console.error('CoinMarketCap SOL price also failed:', error.message);
+    res.status(503).json({ error: 'Unable to fetch SOL price. Please try again shortly.' });
   }
 });
 
@@ -199,6 +203,22 @@ app.get('/api/sol-balance', async (req, res) => {
     res.json({ balance: sol });
   } catch (error) {
     console.error('SOL balance error:', error.message);
+
+    // Fallback — Shyft wallet balance API, only tried if Helius/public RPC failed
+    if (SHYFT_API_KEY) {
+      try {
+        const shyftData = await safeFetch(
+          `https://api.shyft.to/sol/v1/wallet/balance?network=mainnet-beta&wallet=${address.trim()}`,
+          {
+            headers: { 'x-api-key': SHYFT_API_KEY },
+          }
+        );
+        return res.json({ balance: shyftData.result?.balance ?? 0 });
+      } catch (shyftError) {
+        console.error('Shyft balance fallback error:', shyftError.message);
+      }
+    }
+
     res.status(503).json({
       error: 'Unable to fetch SOL balance. Solana network may be experiencing delays.',
     });
@@ -385,6 +405,25 @@ app.post('/api/token-prices-live', async (req, res) => {
   } catch (error) {
     console.error('Live price error:', error.message);
     res.status(503).json({ error: 'Unable to fetch live prices.' });
+  }
+});
+
+// Lightweight metadata-only lookup — used to resolve real names for
+// SPL tokens appearing in transaction descriptions (not pricing-related)
+app.get('/api/token-metadata', async (req, res) => {
+  const { mints } = req.query;
+  if (!mints) return res.status(400).json({ error: 'Mint addresses are required.' });
+  try {
+    const mintList = mints.split(',').filter(Boolean);
+    const metadataMap = await resolveTokenMetadata(mintList);
+    const metadata = {};
+    for (const [mint, meta] of metadataMap.entries()) {
+      metadata[mint] = { symbol: meta.symbol, name: meta.name };
+    }
+    res.json({ metadata });
+  } catch (error) {
+    console.error('Token metadata error:', error.message);
+    res.status(503).json({ error: 'Unable to resolve token metadata.' });
   }
 });
 
@@ -669,9 +708,10 @@ app.use((err, req, res, next) => {
 // ── START SERVER ──
 // ════════════════════════════════════════
 app.listen(PORT, () => {
-  console.log(`✅ SolTrace server running on http://localhost:${PORT}`);
-  console.log(`🌍 Environment: ${NODE_ENV}`);
-  console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'}`);
-  console.log(`🔑 Shyft API: ${SHYFT_API_KEY ? 'Connected' : '⚠️  Not configured'}`);
-  console.log(`🔑 CoinGecko: ${COINGECKO_API_KEY ? 'Pro tier' : 'Free tier'}`);
+  console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'} (metadata + fallback structural data)`);
+  console.log(`🔑 Shyft API: ${SHYFT_API_KEY ? 'Connected' : '⚠️  Not configured'} (structural data fallback only)`);
+  console.log(`🔑 Jupiter Price V3: ${JUPITER_API_KEY ? 'Keyed (1 req/sec)' : 'Keyless (0.5 req/sec)'} (primary token pricing)`);
+  console.log(`🔑 Raydium V3: Unauthenticated (fallback token pricing)`);
+  console.log(`🔑 CoinGecko: ${COINGECKO_API_KEY ? 'Demo tier' : 'Keyless'} (primary SOL price)`);
+  console.log(`🔑 CoinMarketCap: ${CMC_API_KEY ? 'Connected' : '⚠️  Not configured'} (SOL price fallback)`);
 });

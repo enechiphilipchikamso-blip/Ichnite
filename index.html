@@ -111,24 +111,25 @@
   <p id="solEmptyMsg" class="empty-msg hidden">This wallet has no SOL balance</p>
 
   <div id="solMarketSection" class="sol-market-section hidden">
-    <p class="sol-market-heading">Market</p>
-    <div class="sol-market-row">
-      <span class="sol-market-label">SOL price</span>
-      <span id="solPrice" class="sol-price"></span>
-    </div>
-    <div class="sol-market-row">
-      <span class="sol-market-label">24h change</span>
-      <span id="solPriceChange" class="sol-change"></span>
-    </div>
-    <div class="sol-divider"></div>
-    <div id="walletAgeRow" class="wallet-age-row hidden">
-      <span class="wallet-age-left">
-        <i class="fa-regular fa-clock"></i>
-        <span>Wallet age</span>
-      </span>
-      <span id="walletAge" class="wallet-age-value"></span>
-    </div>
+  <p class="sol-market-heading">Market</p>
+  <div id="solMarketPriceRow" class="sol-market-row">
+    <span class="sol-market-label">SOL price</span>
+    <span id="solPrice" class="sol-price"></span>
   </div>
+  <div id="solMarketChangeRow" class="sol-market-row">
+    <span class="sol-market-label">24h change</span>
+    <span id="solPriceChange" class="sol-change"></span>
+  </div>
+  <p id="solMarketUnavailable" class="wallet-age-value hidden" style="text-align: center; margin-top: 4px;">Price unavailable</p>
+  <div class="sol-divider"></div>
+  <div id="walletAgeRow" class="wallet-age-row hidden">
+    <span class="wallet-age-left">
+      <i class="fa-regular fa-clock"></i>
+      <span>Wallet age</span>
+    </span>
+    <span id="walletAge" class="wallet-age-value"></span>
+  </div>
+</div>
 </div>
 
     <!-- Card 2 — Token Holdings -->

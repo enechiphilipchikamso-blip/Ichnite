@@ -418,7 +418,9 @@ p {
 /* ── Pie Chart ── */
 canvas#pieChart {
   width: 100% !important;
-  margin-top: 16px;
+  max-width: 280px;
+  margin: 16px auto 0;
+  display: block;
   border-radius: 12px;
 }
 
