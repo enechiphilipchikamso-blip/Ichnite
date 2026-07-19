@@ -708,6 +708,8 @@ app.use((err, req, res, next) => {
 // ── START SERVER ──
 // ════════════════════════════════════════
 app.listen(PORT, () => {
+  
+  console.log(`✅ SolTrace server running on http://localhost:${PORT}`);
   console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'} (metadata + fallback structural data)`);
   console.log(`🔑 Shyft API: ${SHYFT_API_KEY ? 'Connected' : '⚠️  Not configured'} (structural data fallback only)`);
   console.log(`🔑 Jupiter Price V3: ${JUPITER_API_KEY ? 'Keyed (1 req/sec)' : 'Keyless (0.5 req/sec)'} (primary token pricing)`);
