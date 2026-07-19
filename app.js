@@ -708,6 +708,9 @@ async function fetchSolBalance(address) {
     currentSolBalance = balanceData.balance || 0;
     solBalanceFailed = false;
 
+    // Load SOL logo
+    if (solLogo?.dataset.src) solLogo.src = solLogo.dataset.src;
+
     if (currentSolBalance === 0) {
       hide(solBalanceRow);
       show(document.getElementById('solEmptyMsg'));
