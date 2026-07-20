@@ -250,6 +250,7 @@ main {
   margin-bottom: 6px;
   width: 100%;
   min-width: 0;
+  flex: 1;
   overflow-x: hidden;
 }
 
@@ -523,20 +524,52 @@ grid-template-columns: repeat(4, 1fr);
   margin-bottom: 6px;
 }
 
-.yearOption {
-  background-color: rgba(255, 255, 255, 0.15);
+.year-selector-title {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.year-chip-row {
+  display: flex;
+  gap: 12px;
+  background-color: var(--input-bg);
+  border-radius: 50px;
+  padding: 6px;
+}
+
+.year-chip {
+  flex: 1;
+
+  background-color: var(--blue-purple);
+
   color: var(--white);
   border: none;
   border-radius: 50px;
-  padding: 8px 16px;
-  font-size: 0.85rem;
+
+  padding: 10px 0;
+
+  font-size: 0.9rem;
+  font-weight: 600;
+
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all .25s ease;
+
   outline: none;
+
+  font-family: 'Space Grotesk', sans-serif;
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
-.yearOption:active {
-  background-color: rgba(255, 255, 255, 0.3);
+.year-chip:active {
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+.year-chip.selected {
+  background: rgba(255,255,255,.05);
+  color: var(--blue-purple);
 }
 
 /* ── Bar Chart Scrollable Container ── */

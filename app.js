@@ -204,6 +204,7 @@ let barChartInstance = null;
 let solFetchFailed = false;
 let tokenFetchFailed = false;
 let barDataAvailable = false;
+let yearRangeActive = false;
 let tokenDataAvailable = false;
 let netWorthRevealed = false;
 let tokenCardRevealed = false;
@@ -1566,6 +1567,18 @@ async function fetchTransactions(address) {
   }
 }
 
+const GENERIC_SOURCES = new Set(['SYSTEM_PROGRAM', 'UNKNOWN']);
+
+function getRecognizedSourceLabel(tx) {
+  const source = tx.source;
+  if (!source || GENERIC_SOURCES.has(source.toUpperCase())) return null;
+  // e.g. "MARINADE" -> "Marinade", "MAGIC_EDEN_V2" -> "Magic Eden V2"
+  return source
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
 function describeTransaction(tx, txTokenMetadata) {
   const type = tx.type?.toUpperCase() || '';
 
@@ -1582,7 +1595,9 @@ function describeTransaction(tx, txTokenMetadata) {
   }
 
   if (tx.description) {
-    return tx.description.replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, (match) => truncateAddress(match));
+    const truncated = tx.description.replace(/[1-9A-HJ-NP-Za-km-z]{32,44}/g, (match) => truncateAddress(match));
+    const sourceLabel = getRecognizedSourceLabel(tx);
+    return sourceLabel ? `${truncated} via ${sourceLabel}` : truncated;
   }
   if (type === 'TRANSFER') {
     if (tx.feePayer === currentWalletAddress) return `Sent SOL to ${truncateAddress(tx.nativeTransfers?.[0]?.toUserAccount || 'unknown')}`;
@@ -1747,11 +1762,14 @@ function buildBarChartData(transactions, range, yearCount = 1) {
 
 function renderBarChart(transactions, range, yearCount = 1) {
   hide(barSkeleton);
-  show(barSpinner);
+  // Only show the spinner for a genuine first draw — toggles reuse in-memory
+  // data and update synchronously, no wait is actually needed
+  const isFirstDraw = !barChartInstance;
+  if (isFirstDraw) show(barSpinner);
 
   const { labels, counts } = buildBarChartData(transactions, range, yearCount);
 
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     hide(barSpinner);
     show(barChart);
 
@@ -1825,7 +1843,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
 
     barChartInstance.resize();
     revealCard(barChart.closest('.card'));
-  }, CONFIG.CHART_DRAW_DELAY);
+  });
 }
 
 // ════════════════════════════════════════
@@ -1847,11 +1865,20 @@ toggleBtns.forEach(btn => {
       const isOpen = !yearDropdown.classList.contains('hidden');
       if (isOpen) {
         hide(yearDropdown);
-        btn.style.transform = '';
-        btn.classList.remove('active');
-        currentBarRange = 'days';
-        renderBarChart(allTransactions, 'days', 1);
+        if (yearRangeActive) {
+          // A year was already picked — keep it active, don't touch the chart
+          btn.classList.add('active');
+          btn.style.transform = 'scale(1.15)';
+        } else {
+          // Dropdown closed without ever picking a year — no chart change needed,
+          // it was never altered in the first place
+          btn.style.transform = '';
+          btn.classList.remove('active');
+        }
       } else {
+        yearOptions.forEach(opt => {
+          opt.classList.toggle('selected', parseInt(opt.dataset.year) === currentYearSelection && yearRangeActive);
+        });
         show(yearDropdown);
       }
     } else {
@@ -1862,13 +1889,17 @@ toggleBtns.forEach(btn => {
   });
 });
 
+const yearToggleBtn = document.querySelector('[data-range="year"]');
+
 yearOptions.forEach(option => {
   option.addEventListener('click', () => {
     if (!barDataAvailable) return;
 
     currentYearSelection = parseInt(option.dataset.year);
     currentBarRange = 'year';
+    yearRangeActive = true;
     hide(yearDropdown);
+    if (yearToggleBtn) yearToggleBtn.textContent = `${currentYearSelection} Year${currentYearSelection > 1 ? 's' : ''}`;
     renderBarChart(allTransactions, 'year', currentYearSelection);
   });
 });
@@ -1880,6 +1911,20 @@ yearOptions.forEach(option => {
 
 function updateNetWorth() {
   document.getElementById('netWorthError')?.remove();
+  document.getElementById('netWorthEmpty')?.remove();
+
+  // Genuinely empty portfolio — both fetches succeeded, wallet just holds nothing.
+  // Distinct from a failure state: nothing went wrong, there's simply no value to show.
+  if (!solFetchFailed && !tokenFetchFailed && currentSolBalance === 0 && allTokens.length === 0) {
+    hide(netWorthSkeleton);
+    hide(netWorthValue);
+    const msg = document.createElement('p');
+    msg.id = 'netWorthEmpty';
+    msg.className = 'empty-msg';
+    msg.textContent = 'This wallet has no assets';
+    totalNetWorth.appendChild(msg);
+    return;
+  }
 
   if (solFetchFailed && tokenFetchFailed) {
     hide(netWorthSkeleton);
