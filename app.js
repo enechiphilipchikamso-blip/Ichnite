@@ -165,6 +165,9 @@ const TOKEN_COLORS = Object.freeze({
   LIT: '#18181B',
   BOXABL: '#1E3A8A',
   WINGS: '#38BDF8',
+  FDUSD: '#4AFAB4',
+  Cake: '#D1884F',
+  Ton: '#00A8E0',
   DEFAULT: '#7c5cfc',
 });
 
