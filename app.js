@@ -1204,6 +1204,107 @@ function openTokenSortOverlay() {
 // Improvement 4: Update chart instead of recreating when possible
 // ════════════════════════════════════════
 
+function getOrCreatePieTooltip() {
+  let tooltipEl = document.getElementById('pieChartTooltip');
+
+  if (!tooltipEl) {
+    tooltipEl = document.createElement('div');
+    tooltipEl.id = 'pieChartTooltip';
+    tooltipEl.style.position = 'fixed';
+    tooltipEl.style.background = '#1a1a2e';
+    tooltipEl.style.border = '1px solid #7c5cfc';
+    tooltipEl.style.borderRadius = '8px';
+    tooltipEl.style.color = '#7c5cfc';
+    tooltipEl.style.opacity = 0;
+    tooltipEl.style.pointerEvents = 'none';
+    tooltipEl.style.transition = 'opacity .1s ease';
+    tooltipEl.style.zIndex = '9999';
+    tooltipEl.style.transform = 'translate(-50%, -100%)';
+    tooltipEl.style.padding = '10px 12px';
+
+    const table = document.createElement('table');
+    table.style.margin = '0px';
+    tooltipEl.appendChild(table);
+
+    document.body.appendChild(tooltipEl);
+  }
+
+  return tooltipEl;
+}
+
+function pieTooltipHandler(context) {
+  const { chart, tooltip } = context;
+  const tooltipEl = getOrCreatePieTooltip();
+
+  // Hide when not hovering a slice
+  if (tooltip.opacity === 0) {
+    tooltipEl.style.opacity = 0;
+    return;
+  }
+
+  if (tooltip.body) {
+    const titleLines = tooltip.title || [];
+    const bodyLines = tooltip.body.map(b => b.lines);
+
+    const tableHead = document.createElement('thead');
+    titleLines.forEach(title => {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.style.textAlign = 'left';
+      th.style.color = '#ffffff';
+      th.style.fontFamily = 'Space Grotesk, sans-serif';
+      th.style.fontSize = '13px';
+      th.style.fontWeight = '600';
+      th.style.paddingBottom = '4px';
+      th.appendChild(document.createTextNode(title));
+      tr.appendChild(th);
+      tableHead.appendChild(tr);
+    });
+
+    const tableBody = document.createElement('tbody');
+    bodyLines.forEach((lines, i) => {
+      const colors = tooltip.labelColors[i];
+      lines.forEach((line, lineIndex) => {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.style.fontFamily = 'Space Grotesk, sans-serif';
+        td.style.fontSize = '12px';
+        td.style.padding = '1px 0';
+
+        if (lineIndex === 0) {
+          const swatch = document.createElement('span');
+          swatch.style.display = 'inline-block';
+          swatch.style.width = '10px';
+          swatch.style.height = '10px';
+          swatch.style.marginRight = '6px';
+          swatch.style.background = colors.backgroundColor;
+          swatch.style.borderRadius = '2px';
+          td.appendChild(swatch);
+        }
+
+        td.appendChild(document.createTextNode(line));
+        tr.appendChild(td);
+        tableBody.appendChild(tr);
+      });
+    });
+
+    const tableRoot = tooltipEl.querySelector('table');
+    while (tableRoot.firstChild) {
+      tableRoot.firstChild.remove();
+    }
+    tableRoot.appendChild(tableHead);
+    tableRoot.appendChild(tableBody);
+  }
+
+  // Position from the canvas's real screen location — immune to both
+  // canvas pixel-edge clipping and any parent's overflow:hidden, since
+  // this element lives on document.body, not inside the chart's card.
+  const canvasRect = chart.canvas.getBoundingClientRect();
+  tooltipEl.style.opacity = 1;
+  tooltipEl.style.left = canvasRect.left + tooltip.caretX + 'px';
+  tooltipEl.style.top = canvasRect.top + tooltip.caretY - 8 + 'px';
+}
+
 let pieChartDrawing = false;
 let currentPieSlices = [];
 
@@ -1298,7 +1399,9 @@ function drawPieChart(tokens, totalValue) {
             },
           },
           tooltip: {
-            enabled: true,
+            enabled: false,
+            position: 'nearest',
+            external: pieTooltipHandler,
             backgroundColor: '#1a1a2e',
             titleColor: '#ffffff',
             bodyColor: '#7c5cfc',

@@ -1392,6 +1392,20 @@ grid-template-columns: repeat(4, 1fr);
   font-family: 'Space Grotesk', sans-serif;
 }
 
+.remove-confirm-text {
+  /* Stops text selection and highlighters */
+  -webkit-user-select: none; 
+  -ms-user-select: none;     
+  user-select: none;         
+
+  /* Stops the iOS long-press pop-up menu */
+  -webkit-touch-callout: none; 
+
+  /* Stops the Android/Chrome tap highlight flash */
+  -webkit-tap-highlight-color: transparent; 
+}
+
+
 .remove-confirm-btn {
   background: var(--error);
   color: #ffffff;
@@ -1402,6 +1416,19 @@ grid-template-columns: repeat(4, 1fr);
   font-weight: 600;
   cursor: pointer;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.remove-confirm-btn {
+  /* Stops text selection and highlighters */
+  -webkit-user-select: none; 
+  -ms-user-select: none;     
+  user-select: none;         
+
+  /* Stops the iOS long-press pop-up menu */
+  -webkit-touch-callout: none; 
+
+  /* Stops the Android/Chrome tap highlight flash */
+  -webkit-tap-highlight-color: transparent; 
 }
 
 .remove-confirm-cancel {
@@ -1415,6 +1442,19 @@ grid-template-columns: repeat(4, 1fr);
   display: block;
   width: 100%;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.remove-confirm-cancel {
+  /* Stops text selection and highlighters */
+  -webkit-user-select: none; 
+  -ms-user-select: none;     
+  user-select: none;         
+
+  /* Stops the iOS long-press pop-up menu */
+  -webkit-touch-callout: none; 
+
+  /* Stops the Android/Chrome tap highlight flash */
+  -webkit-tap-highlight-color: transparent; 
 }
 
 /* ── Token Sort Custom Dropdown ── */
