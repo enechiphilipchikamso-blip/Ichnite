@@ -205,6 +205,7 @@ let solFetchFailed = false;
 let tokenFetchFailed = false;
 let barDataAvailable = false;
 let yearRangeActive = false;
+let barCardRevealed = false;
 let tokenDataAvailable = false;
 let netWorthRevealed = false;
 let tokenCardRevealed = false;
@@ -266,6 +267,7 @@ const nftCountBadge = document.getElementById('nftCountBadge');
 const toggleBtns = document.querySelectorAll('.toggleBtn');
 const yearDropdown = document.getElementById('yearDropdown');
 const yearOptions = document.querySelectorAll('.yearOption');
+const yearToggleBtn = document.querySelector('[data-range="year"]');
 const barSkeleton = document.getElementById('barSkeleton');
 const barSpinner = document.getElementById('barSpinner');
 const barChart = document.getElementById('barChart');
@@ -316,6 +318,32 @@ function formatUSD(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatTokenAmountShort(amount) {
+  const n = Number(amount);
+  if (!Number.isFinite(n)) return '0.0000';
+
+  const units = [
+    { divisor: 1e12, suffix: 'T' },
+    { divisor: 1e9, suffix: 'B' },
+    { divisor: 1e6, suffix: 'M' },
+    { divisor: 1e3, suffix: 'K' },
+  ];
+
+  for (let i = 0; i < units.length; i++) {
+    const { divisor, suffix } = units[i];
+    if (n >= divisor) {
+      const rounded = Number((n / divisor).toFixed(2));
+      if (rounded >= 1000 && i > 0) {
+        const upper = units[i - 1];
+        return (n / upper.divisor).toFixed(2) + upper.suffix;
+      }
+      return rounded.toFixed(2) + suffix;
+    }
+  }
+
+  return n.toFixed(4);
 }
 
 function formatSOL(value) {
@@ -553,6 +581,8 @@ function showRemoveConfirm(addressToRemove) {
 function showAllSkeletons() {
   show(resultsSection);
   document.getElementById('netWorthError')?.remove();
+  document.getElementById('netWorthEmpty')?.remove();
+  document.getElementById('netWorthPending')?.remove();
   show(totalNetWorth);
   show(netWorthSkeleton);
   show(netWorthLabel);
@@ -628,7 +658,6 @@ function resetAll() {
   hide(clearBtn);
   hide(totalNetWorth);
   renderSearchHistory();
-  /* showFloatingLogos(); */
   if (pieChartInstance) { pieChartInstance.destroy(); pieChartInstance = null; }
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
   if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
@@ -640,6 +669,10 @@ function resetAll() {
   document.querySelector('[data-range="days"]')?.classList.add('active');
   hide(yearDropdown);
   currentBarRange = 'days';
+  currentYearSelection = 1;
+  yearRangeActive = false;
+  if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
+  yearOptions.forEach(opt => opt.classList.remove('selected'));
   walletInput.focus();
 }
 
@@ -730,6 +763,7 @@ async function handleSearch() {
     tokenDataAvailable = false;
     netWorthRevealed = false;
     tokenCardRevealed = false;
+    barCardRevealed = false;
     solBalanceFailed = false;
     solPriceFailed = false;
     solAgeFailed = false;
@@ -1023,14 +1057,24 @@ function sortTokens(tokens) {
 function renderTokenList(tokens) {
   const sorted = sortTokens(tokens);
 
+  // Total and pie chart always reflect the complete portfolio, never the filtered view
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
   
   hide(tokenTotalSkeleton);
   tokenTotalValue.textContent = formatUSD(totalValue);
   show(tokenTotalValue);
 
-  const fragment = buildTokenRowsFragment(sorted);
+  // Displayed rows respect whatever search query is currently active —
+// so a background price refresh never silently clears the user's filter
+const query = tokenSearch?.value.toLowerCase().trim();
+  const displayed = query
+    ? sorted.filter(t => t.symbol?.toLowerCase().includes(query) || t.name?.toLowerCase().includes(query))
+    : sorted;
+
+  const prevScrollTop = tokenList.scrollTop;
+  const fragment = buildTokenRowsFragment(displayed);
   tokenList.replaceChildren(fragment);
+  tokenList.scrollTop = prevScrollTop;
 
   // Lazy load token logos
   tokenList.querySelectorAll('img[data-src]').forEach(img => {
@@ -1038,7 +1082,7 @@ function renderTokenList(tokens) {
   });
 
   const fadeEl = document.getElementById('tokenScrollFade');
-  if (sorted.length > 5) {
+  if (displayed.length > 5) {
     show(fadeEl);
   } else {
     hide(fadeEl);
@@ -1207,33 +1251,6 @@ function openTokenSortOverlay() {
 let pieChartDrawing = false;
 let currentPieSlices = [];
 
-function formatTokenAmountShort(amount) {
-  const n = Number(amount);
-  if (!Number.isFinite(n)) return '0.0000';
-
-  const units = [
-    { divisor: 1e12, suffix: 'T' },
-    { divisor: 1e9, suffix: 'B' },
-    { divisor: 1e6, suffix: 'M' },
-    { divisor: 1e3, suffix: 'K' },
-  ];
-
-  for (let i = 0; i < units.length; i++) {
-    const { divisor, suffix } = units[i];
-    if (n >= divisor) {
-      const rounded = Number((n / divisor).toFixed(2));
-      if (rounded >= 1000 && i > 0) {
-        // rounding pushed this into the next unit up — use that unit instead
-        const upper = units[i - 1];
-        return (n / upper.divisor).toFixed(2) + upper.suffix;
-      }
-      return rounded.toFixed(2) + suffix;
-    }
-  }
-
-  return n.toFixed(4);
-}
-
 function drawPieChart(tokens, totalValue) {
   const priced = tokens.filter(t => hasKnownPrice(t));
 
@@ -1331,22 +1348,22 @@ function drawPieChart(tokens, totalValue) {
             bodyColor: '#7c5cfc',
             borderColor: '#7c5cfc',
             borderWidth: 1,
-            padding: 20,
+            padding: 6,
             callbacks: {
               label(context) {
                 const slice = currentPieSlices[context.dataIndex];
                 const total = currentPieSlices.reduce((sum, s) => sum + s.value, 0);
                 const percentage = total > 0 ? ((slice.value / total) * 100).toFixed(1) : '0.0';
                 if (slice.isOther) {
-                      return [
-                        `Tokens: ${slice.tokenCount}`,
-                        `Amount: ${formatTokenAmountShort(slice.amount)}`,
-                        `Value: ${formatUSD(slice.value)}`,
-                        `Share: ${percentage}%`,
-                      ];
-                    }
+                  return [
+                    `Tokens: ${slice.tokenCount}`,
+                    `Amount: ${formatTokenAmountShort(slice.amount)}`,
+                    `Value: ${formatUSD(slice.value)}`,
+                    `Share: ${percentage}%`,
+                  ];
+                }
                 return [
-                  `Amount: ${slice.amount.toFixed(4)}`,
+                  `Amount: ${formatTokenAmountShort(slice.amount)}`,
                   `Value: ${formatUSD(slice.value)}`,
                   `Share: ${percentage}%`,
                 ];
@@ -1869,7 +1886,10 @@ function renderBarChart(transactions, range, yearCount = 1) {
     });
 
     barChartInstance.resize();
-    revealCard(barChart.closest('.card'));
+    if (!barCardRevealed) {
+      revealCard(barChart.closest('.card'));
+      barCardRevealed = true;
+    }
   });
 }
 
@@ -1909,14 +1929,15 @@ toggleBtns.forEach(btn => {
         show(yearDropdown);
       }
     } else {
+      yearRangeActive = false;
       hide(yearDropdown);
+      if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
+      yearOptions.forEach(opt => opt.classList.remove('selected'));
       currentBarRange = range;
       renderBarChart(allTransactions, range, currentYearSelection);
     }
   });
 });
-
-const yearToggleBtn = document.querySelector('[data-range="year"]');
 
 yearOptions.forEach(option => {
   option.addEventListener('click', () => {
@@ -1940,6 +1961,7 @@ function updateNetWorth() {
   document.getElementById('netWorthError')?.remove();
   document.getElementById('netWorthEmpty')?.remove();
 
+
   // Genuinely empty portfolio — both fetches succeeded, wallet just holds nothing.
   // Distinct from a failure state: nothing went wrong, there's simply no value to show.
   if (!solFetchFailed && !tokenFetchFailed && currentSolBalance === 0 && allTokens.length === 0) {
@@ -1952,6 +1974,27 @@ function updateNetWorth() {
     totalNetWorth.appendChild(msg);
     return;
   }
+
+  // Wallet holds real tokens but none are priced yet, and has 0 SOL —
+  // re-evaluated on every call, so this clears itself automatically once
+  // live pricing resolves for any of them
+  if (
+    !solFetchFailed && !tokenFetchFailed &&
+    currentSolBalance === 0 && allTokens.length > 0 &&
+    allTokens.every(t => t.priceUnavailable)
+  ) {
+    document.getElementById('netWorthEmpty')?.remove();
+    hide(netWorthSkeleton);
+    hide(netWorthValue);
+    const msg = document.createElement('p');
+    msg.id = 'netWorthPending';
+    msg.className = 'empty-msg';
+    msg.textContent = `Value pending — ${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held, pricing pending`;
+    totalNetWorth.appendChild(msg);
+    return;
+  }
+  
+  document.getElementById('netWorthPending')?.remove();
 
   if (solFetchFailed && tokenFetchFailed) {
     hide(netWorthSkeleton);
