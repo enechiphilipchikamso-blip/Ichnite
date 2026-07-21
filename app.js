@@ -275,6 +275,7 @@ const last7txList = document.getElementById('last7txList');
 const txSkeleton = document.getElementById('txSkeleton');
 const solscanLink = document.getElementById('solscanLink');
 const accordionBtns = document.querySelectorAll('.accordion-btn');
+const infoAccordions = document.querySelectorAll('.accordion.full-width');
 
 // ════════════════════════════════════════
 // ── 7. SERVICE WORKER REGISTRATION ──
@@ -579,6 +580,7 @@ function showRemoveConfirm(addressToRemove) {
 // ════════════════════════════════════════
 
 function showAllSkeletons() {
+  infoAccordions.forEach(el => hide(el));
   show(resultsSection);
   document.getElementById('netWorthError')?.remove();
   document.getElementById('netWorthEmpty')?.remove();
@@ -598,6 +600,15 @@ function showAllSkeletons() {
   hide(tokenList);
   hide(tokenTotalValue);
   hide(document.getElementById('tokenScrollFade'));
+  document.getElementById('pieAllHiddenMsg')?.remove();
+  if (pieChartInstance) {
+    pieChartInstance.data.labels.forEach((_, i) => {
+      if (!pieChartInstance.getDataVisibility(i)) {
+        pieChartInstance.toggleDataVisibility(i);
+      }
+    });
+    pieChartInstance.update();
+  }
   show(pieSkeleton);
   hide(pieSpinner);
   hide(pieChart);
@@ -657,8 +668,16 @@ function resetAll() {
   hide(walletDisplay);
   hide(clearBtn);
   hide(totalNetWorth);
+  infoAccordions.forEach(el => show(el));
+  infoAccordions.forEach(el => {
+    const content = el.querySelector('.accordion-content');
+    const arrow = el.querySelector('.arrow');
+    hide(content);
+    arrow?.classList.remove('open');
+  });
   renderSearchHistory();
   if (pieChartInstance) { pieChartInstance.destroy(); pieChartInstance = null; }
+  document.getElementById('pieAllHiddenMsg')?.remove();
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
   if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
   document.title = 'SolTrace';
@@ -1054,35 +1073,39 @@ function sortTokens(tokens) {
   });
 }
 
-function renderTokenList(tokens) {
+// Total value + pie chart always reflect the COMPLETE portfolio — never the filtered view
+function updateTokenTotalsAndChart(tokens) {
   const sorted = sortTokens(tokens);
-
-  // Total and pie chart always reflect the complete portfolio, never the filtered view
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
-  
-  hide(tokenTotalSkeleton);
   tokenTotalValue.textContent = formatUSD(totalValue);
   show(tokenTotalValue);
+  drawPieChart(sorted, totalValue);
+  updateNetWorth();
+}
 
-  // Displayed rows respect whatever search query is currently active —
-// so a background price refresh never silently clears the user's filter
-const query = tokenSearch?.value.toLowerCase().trim();
-  const displayed = query
-    ? sorted.filter(t => t.symbol?.toLowerCase().includes(query) || t.name?.toLowerCase().includes(query))
-    : sorted;
+// Single source of truth for what rows are displayed — always reads the CURRENT
+// search query and sort selection live from the DOM, regardless of caller
+// (initial load, live refresh, search typing, or sort change).
+function renderVisibleTokenRows() {
+  if (!tokenDataAvailable) return;
 
+  const query = tokenSearch?.value.toLowerCase().trim();
+  const filtered = query
+    ? allTokens.filter(t => t.symbol?.toLowerCase().includes(query) || t.name?.toLowerCase().includes(query))
+    : allTokens;
+
+  const sorted = sortTokens(filtered);
   const prevScrollTop = tokenList.scrollTop;
-  const fragment = buildTokenRowsFragment(displayed);
+  const fragment = buildTokenRowsFragment(sorted);
   tokenList.replaceChildren(fragment);
   tokenList.scrollTop = prevScrollTop;
 
-  // Lazy load token logos
   tokenList.querySelectorAll('img[data-src]').forEach(img => {
     if (img.dataset.src) img.src = img.dataset.src;
   });
 
   const fadeEl = document.getElementById('tokenScrollFade');
-  if (displayed.length > 5) {
+  if (sorted.length > 5) {
     show(fadeEl);
   } else {
     hide(fadeEl);
@@ -1093,65 +1116,17 @@ const query = tokenSearch?.value.toLowerCase().trim();
     revealCard(tokenList.closest('.card'));
     tokenCardRevealed = true;
   }
-  drawPieChart(sorted, totalValue);
-  updateNetWorth();
 }
 
-// Lightweight reorder — used only when the user picks a sort option.
-// Skips total recalculation, pie chart redraw, and net worth recalculation
-// since sorting never changes the underlying data, only its display order.
-// Does nothing if no real token data has loaded yet.
-function resortTokenListOnly() {
-  if (!tokenDataAvailable) return;
-
-  const sorted = sortTokens(allTokens);
-  const fragment = buildTokenRowsFragment(sorted);
-  tokenList.replaceChildren(fragment);
-
-  tokenList.querySelectorAll('img[data-src]').forEach(img => {
-    if (img.dataset.src) img.src = img.dataset.src;
-  });
-
-  const fadeEl = document.getElementById('tokenScrollFade');
-  if (sorted.length > 5) {
-    show(fadeEl);
-  } else {
-    hide(fadeEl);
-  }
-}
-
-// Lightweight filter — used only when the user types in the token search box.
-// Filters the visible rows in the currently selected sort order, but skips
-// total recalculation, pie chart redraw, and net worth recalculation, since
-// searching never changes the underlying dataset — only what's shown.
-// Does nothing if no real token data has loaded yet.
-function filterTokenListOnly() {
-  if (!tokenDataAvailable) return;
-
-  const query = tokenSearch.value.toLowerCase().trim();
-  const filtered = query
-    ? allTokens.filter(t => t.symbol?.toLowerCase().includes(query) || t.name?.toLowerCase().includes(query))
-    : allTokens;
-
-  const sorted = sortTokens(filtered);
-  const fragment = buildTokenRowsFragment(sorted);
-  tokenList.replaceChildren(fragment);
-
-  tokenList.querySelectorAll('img[data-src]').forEach(img => {
-    if (img.dataset.src) img.src = img.dataset.src;
-  });
-
-  const fadeEl = document.getElementById('tokenScrollFade');
-  if (sorted.length > 5) {
-    show(fadeEl);
-  } else {
-    hide(fadeEl);
-  }
+// Full render — used by initial fetch and live refresh. Updates everything.
+function renderTokenList(tokens) {
+  updateTokenTotalsAndChart(tokens);
+  renderVisibleTokenRows();
 }
 
 if (tokenSearch) {
   tokenSearch.addEventListener('input', () => {
-    filterTokenListOnly();
+    renderVisibleTokenRows();
   });
 }
 
@@ -1223,7 +1198,7 @@ function openTokenSortOverlay() {
       arrowEl?.classList.remove('open');
       tokenSort.setAttribute('aria-expanded', 'false');
       overlay.remove();
-      resortTokenListOnly();
+      renderVisibleTokenRows();
     });
 
     card.appendChild(row);
@@ -1333,6 +1308,29 @@ function drawPieChart(tokens, totalValue) {
             display: true,
             position: 'bottom',
             align: 'center',
+            onClick: (e, legendItem, legend) => {
+                const chart = legend.chart;
+                chart.toggleDataVisibility(legendItem.index);
+                chart.setActiveElements([]);
+                chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+                chart.update();
+              
+                const allHidden = chart.data.labels.every((_, i) => !chart.getDataVisibility(i));
+                let placeholder = document.getElementById('pieAllHiddenMsg');
+              
+                if (allHidden) {
+                  hide(pieChart);
+                  if (!placeholder) {
+                   placeholder = document.createElement('p');
+                    placeholder.id = 'pieAllHiddenMsg';
+                    placeholder.textContent = 'All tokens hidden — click a legend item to show it again';
+                    pieChart.insertAdjacentElement('afterend', placeholder);
+                  }
+                } else {
+                  show(pieChart);
+                  if (placeholder) placeholder.remove();
+                }
+              },
             labels: {
               color: '#7c5cfc', // uniform legend text color, never tied to swatch hash
               font: { family: 'Space Grotesk', size: 12 },
@@ -1747,7 +1745,10 @@ async function renderRecentTransactions(transactions) {
 
   last7txList.replaceChildren(fragment);
   hideSkeletonShowContent(txSkeleton, last7txList);
-  revealCard(last7txList.closest('.card'));
+  if (!barCardRevealed) {
+    revealCard(last7txList.closest('.card'));
+    barCardRevealed = true;
+  }
 }
 
 // ════════════════════════════════════════
@@ -1823,7 +1824,10 @@ function renderBarChart(transactions, range, yearCount = 1) {
       barChartInstance.data.datasets[0].data = counts;
       barChartInstance.resize();
       barChartInstance.update();
-      revealCard(barChart.closest('.card'));
+      if (!barCardRevealed) {
+        revealCard(barChart.closest('.card'));
+        barCardRevealed = true;
+      }
       return;
     }
 

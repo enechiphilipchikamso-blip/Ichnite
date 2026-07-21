@@ -1174,16 +1174,27 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 /* ── NFT Count Badge ── */
+.nft-heading {
+  display: flex;
+  align-items: center;
+}
+
 .nft-count-badge {
   background-color: var(--blue-purple);
   color: var(--white);
   font-size: 0.75rem;
   font-weight: 700;
-  padding: 2px 8px;
   border-radius: 50px;
   margin-left: 8px;
-  vertical-align: middle;
+  
+  /* Internal alignment */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px; 
+  padding: 0 8px; 
 }
+
 
 /* ── Wallet Age ── */
 .wallet-age {
@@ -1717,6 +1728,23 @@ grid-template-columns: repeat(4, 1fr);
   height: 1px;
   background: rgba(124, 92, 252, 0.15);
   margin: 8px 0;
+}
+
+#pieAllHiddenMsg {
+  background-color: #1a1a2e;
+  border: 1px solid #7c5cfc;
+  border-radius: 12px;
+  color: #7c5cfc;
+  width: 100%;
+  max-width: 280px;
+  min-height: 200px;
+  margin: 16px auto 0;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 0.9rem;
 }
 
 /*
