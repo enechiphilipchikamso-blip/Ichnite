@@ -1210,7 +1210,7 @@ function getOrCreatePieTooltip() {
   if (!tooltipEl) {
     tooltipEl = document.createElement('div');
     tooltipEl.id = 'pieChartTooltip';
-    tooltipEl.style.position = 'fixed';
+    tooltipEl.style.position = 'absolute';
     tooltipEl.style.background = '#1a1a2e';
     tooltipEl.style.border = '1px solid #7c5cfc';
     tooltipEl.style.borderRadius = '8px';
@@ -1220,7 +1220,7 @@ function getOrCreatePieTooltip() {
     tooltipEl.style.transition = 'opacity .1s ease';
     tooltipEl.style.zIndex = '9999';
     tooltipEl.style.transform = 'translate(-50%, -100%)';
-    tooltipEl.style.padding = '10px 12px';
+    
 
     const table = document.createElement('table');
     table.style.margin = '0px';
@@ -1301,14 +1301,20 @@ function pieTooltipHandler(context) {
   // this element lives on document.body, not inside the chart's card.
   const canvasRect = chart.canvas.getBoundingClientRect();
   tooltipEl.style.opacity = 1;
-  tooltipEl.style.left = canvasRect.left + tooltip.caretX + 'px';
-  tooltipEl.style.top = canvasRect.top + tooltip.caretY - 8 + 'px';
+  tooltipEl.style.left = canvasRect.left + window.scrollX + tooltip.caretX + 'px';
+  tooltipEl.style.top = canvasRect.top + window.scrollY + tooltip.caretY - 8 + 'px';
 }
 
 let pieChartDrawing = false;
 let currentPieSlices = [];
 
 function drawPieChart(tokens, totalValue) {
+  // Clear any leftover tooltip from a previous wallet/search before
+  // rendering new data — prevents a stuck tooltip from floating in the
+  // wrong position after the page content changes underneath it.
+  const staleTooltip = document.getElementById('pieChartTooltip');
+  if (staleTooltip) staleTooltip.style.opacity = 0;
+
   const priced = tokens.filter(t => hasKnownPrice(t));
 
   if (priced.length === 0) {
