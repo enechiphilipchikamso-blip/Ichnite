@@ -1075,6 +1075,7 @@ function sortTokens(tokens) {
 
 // Total value + pie chart always reflect the COMPLETE portfolio — never the filtered view
 function updateTokenTotalsAndChart(tokens) {
+  hide(tokenTotalSkeleton);
   const sorted = sortTokens(tokens);
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
   tokenTotalValue.textContent = formatUSD(totalValue);
@@ -1119,8 +1120,8 @@ function renderVisibleTokenRows() {
 }
 
 // Full render — used by initial fetch and live refresh. Updates everything.
-function renderTokenList(tokens) {
-  updateTokenTotalsAndChart(tokens);
+function renderTokenList() {
+  updateTokenTotalsAndChart(allTokens);
   renderVisibleTokenRows();
 }
 
@@ -1226,6 +1227,22 @@ function openTokenSortOverlay() {
 let pieChartDrawing = false;
 let currentPieSlices = [];
 
+function updatePieAllHiddenState(chart) {
+  const allHidden = chart.data.labels.every((_, i) => !chart.getDataVisibility(i));
+  let placeholder = document.getElementById('pieAllHiddenMsg');
+
+  if (allHidden) {
+    if (!placeholder) {
+      placeholder = document.createElement('p');
+      placeholder.id = 'pieAllHiddenMsg';
+      placeholder.textContent = 'All tokens hidden — tap a legend item to show it again';
+      pieChart.insertAdjacentElement('beforebegin', placeholder);
+    }
+  } else if (placeholder) {
+    placeholder.remove();
+  }
+}
+
 function drawPieChart(tokens, totalValue) {
   const priced = tokens.filter(t => hasKnownPrice(t));
 
@@ -1283,6 +1300,7 @@ function drawPieChart(tokens, totalValue) {
       pieChartInstance.data.datasets[0].data = values;
       pieChartInstance.data.datasets[0].backgroundColor = colors;
       pieChartInstance.update();
+      updatePieAllHiddenState(pieChartInstance);
       pieChartDrawing = false;
       return;
     }
@@ -1314,22 +1332,7 @@ function drawPieChart(tokens, totalValue) {
                 chart.setActiveElements([]);
                 chart.tooltip.setActiveElements([], { x: 0, y: 0 });
                 chart.update();
-              
-                const allHidden = chart.data.labels.every((_, i) => !chart.getDataVisibility(i));
-                let placeholder = document.getElementById('pieAllHiddenMsg');
-              
-                if (allHidden) {
-                  hide(pieChart);
-                  if (!placeholder) {
-                   placeholder = document.createElement('p');
-                    placeholder.id = 'pieAllHiddenMsg';
-                    placeholder.textContent = 'All tokens hidden — click a legend item to show it again';
-                    pieChart.insertAdjacentElement('afterend', placeholder);
-                  }
-                } else {
-                  show(pieChart);
-                  if (placeholder) placeholder.remove();
-                }
+                updatePieAllHiddenState(chart);
               },
             labels: {
               color: '#7c5cfc', // uniform legend text color, never tied to swatch hash
@@ -1349,9 +1352,13 @@ function drawPieChart(tokens, totalValue) {
             padding: 6,
             callbacks: {
               label(context) {
+                const { chart } = context;
                 const slice = currentPieSlices[context.dataIndex];
-                const total = currentPieSlices.reduce((sum, s) => sum + s.value, 0);
-                const percentage = total > 0 ? ((slice.value / total) * 100).toFixed(1) : '0.0';
+                const visibleTotal = currentPieSlices.reduce(
+                  (sum, s, i) => (chart.getDataVisibility(i) ? sum + s.value : sum),
+                  0
+                );
+                const percentage = visibleTotal > 0 ? ((slice.value / visibleTotal) * 100).toFixed(1) : '0.0';
                 if (slice.isOther) {
                   return [
                     `Tokens: ${slice.tokenCount}`,

@@ -1735,16 +1735,13 @@ grid-template-columns: repeat(4, 1fr);
   border: 1px solid #7c5cfc;
   border-radius: 12px;
   color: #7c5cfc;
-  width: 100%;
-  max-width: 280px;
-  min-height: 200px;
+  width: fit-content;
+  max-width: 260px;
   margin: 16px auto 0;
-  padding: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  padding: 10px 16px;
   text-align: center;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 /*
