@@ -1744,6 +1744,19 @@ grid-template-columns: repeat(4, 1fr);
   line-height: 1.4;
 }
 
+#pieHiddenPartial {
+  color: var(--blue-purple-faded);
+  font-size: 0.75rem;
+  text-align: center;
+  margin-top: 8px;
+}
+
+.pie-restore-link {
+  color: #7c5cfc;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /*
 #floatingLogosContainer {
   position: fixed;

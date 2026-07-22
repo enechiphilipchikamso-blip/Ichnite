@@ -600,15 +600,8 @@ function showAllSkeletons() {
   hide(tokenList);
   hide(tokenTotalValue);
   hide(document.getElementById('tokenScrollFade'));
-  document.getElementById('pieAllHiddenMsg')?.remove();
-  if (pieChartInstance) {
-    pieChartInstance.data.labels.forEach((_, i) => {
-      if (!pieChartInstance.getDataVisibility(i)) {
-        pieChartInstance.toggleDataVisibility(i);
-      }
-    });
-    pieChartInstance.update();
-  }
+  hiddenTokenIds.clear();
+  removePieHiddenIndicators();
   show(pieSkeleton);
   hide(pieSpinner);
   hide(pieChart);
@@ -677,7 +670,8 @@ function resetAll() {
   });
   renderSearchHistory();
   if (pieChartInstance) { pieChartInstance.destroy(); pieChartInstance = null; }
-  document.getElementById('pieAllHiddenMsg')?.remove();
+  hiddenTokenIds.clear();
+  removePieHiddenIndicators();
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
   if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
   document.title = 'SolTrace';
@@ -764,7 +758,7 @@ async function handleSearch() {
   
   
     /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
-  document.title = 'SolTrace — Wallet Results';
+  document.title = 'SolTrace — Wallet Results..';
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
   show(clearBtn);
@@ -956,7 +950,7 @@ async function fetchTokens(address) {
     
     // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
-    renderTokenList(allTokens);
+    renderTokenList();
 
   } catch (error) {
     tokenFetchFailed = true;
@@ -1224,40 +1218,33 @@ function openTokenSortOverlay() {
 // Improvement 4: Update chart instead of recreating when possible
 // ════════════════════════════════════════
 
+const OTHER_ID = '__other__';
+const hiddenTokenIds = new Set();
 let pieChartDrawing = false;
 let currentPieSlices = [];
 
-function updatePieAllHiddenState(chart) {
-  const allHidden = chart.data.labels.every((_, i) => !chart.getDataVisibility(i));
-  let placeholder = document.getElementById('pieAllHiddenMsg');
-
-  if (allHidden) {
-    if (!placeholder) {
-      placeholder = document.createElement('p');
-      placeholder.id = 'pieAllHiddenMsg';
-      placeholder.textContent = 'All tokens hidden — tap a legend item to show it again';
-      pieChart.insertAdjacentElement('beforebegin', placeholder);
-    }
-  } else if (placeholder) {
-    placeholder.remove();
-  }
-}
 
 function drawPieChart(tokens, totalValue) {
-  const priced = tokens.filter(t => hasKnownPrice(t));
+  const allPriced = tokens.filter(t => hasKnownPrice(t));
 
-  if (priced.length === 0) {
+  if (allPriced.length === 0) {
+    currentPieSlices = [];
     hide(pieSkeleton);
     hide(pieSpinner);
     hide(pieChart);
+    removePieHiddenIndicators();
     return;
   }
 
-  const sorted = [...priced].sort((a, b) => getTokenUsdValue(b) - getTokenUsdValue(a));
+  // Filter hidden mints BEFORE deciding top-5 vs Other — fresh every render,
+  // no special-casing for direction, no memory of prior position
+  const visiblePriced = allPriced.filter(t => !hiddenTokenIds.has(t.mint));
+  const sorted = [...visiblePriced].sort((a, b) => getTokenUsdValue(b) - getTokenUsdValue(a));
   const top5 = sorted.slice(0, 5);
-  const rest = sorted.slice(5);
+  const rest = sorted.slice(5); // already excludes individually-hidden mints, unconditionally
 
   const slices = top5.map(t => ({
+    id: t.mint,
     label: t.symbol || 'Unknown',
     value: getTokenUsdValue(t),
     color: getTokenColorSafe(t),
@@ -1266,13 +1253,15 @@ function drawPieChart(tokens, totalValue) {
     tokenCount: 1,
   }));
 
-  if (rest.length > 0) {
+  const otherHidden = hiddenTokenIds.has(OTHER_ID);
+  if (rest.length > 0 && !otherHidden) {
     const otherValue = rest.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
     const otherAmount = rest.reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
     slices.push({
+      id: OTHER_ID,
       label: 'Other',
       value: otherValue,
-      color: '#7c5cfc', // fixed brand purple — never hashed
+      color: '#7c5cfc',
       isOther: true,
       amount: otherAmount,
       tokenCount: rest.length,
@@ -1280,6 +1269,12 @@ function drawPieChart(tokens, totalValue) {
   }
 
   currentPieSlices = slices;
+  renderPieHiddenIndicators(slices.length > 0);
+
+  if (slices.length === 0) {
+    hide(pieChart);
+    return;
+  }
 
   if (pieChartDrawing) return;
   pieChartDrawing = true;
@@ -1288,6 +1283,14 @@ function drawPieChart(tokens, totalValue) {
   show(pieSpinner);
 
   requestAnimationFrame(() => {
+    if (currentPieSlices.length === 0) {
+      // superseded by a later call that hid everything before this frame painted
+      hide(pieSpinner);
+      hide(pieChart);
+      pieChartDrawing = false;
+      return;
+    }
+
     hide(pieSpinner);
     show(pieChart);
 
@@ -1300,7 +1303,6 @@ function drawPieChart(tokens, totalValue) {
       pieChartInstance.data.datasets[0].data = values;
       pieChartInstance.data.datasets[0].backgroundColor = colors;
       pieChartInstance.update();
-      updatePieAllHiddenState(pieChartInstance);
       pieChartDrawing = false;
       return;
     }
@@ -1327,15 +1329,16 @@ function drawPieChart(tokens, totalValue) {
             position: 'bottom',
             align: 'center',
             onClick: (e, legendItem, legend) => {
-                const chart = legend.chart;
-                chart.toggleDataVisibility(legendItem.index);
-                chart.setActiveElements([]);
-                chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-                chart.update();
-                updatePieAllHiddenState(chart);
-              },
+              const chart = legend.chart;
+              const clickedSlice = currentPieSlices[legendItem.index];
+              if (!clickedSlice) return;
+              hiddenTokenIds.add(clickedSlice.id);
+              chart.setActiveElements([]);
+              chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+              drawPieChart(allTokens, 0);
+            },
             labels: {
-              color: '#7c5cfc', // uniform legend text color, never tied to swatch hash
+              color: '#7c5cfc',
               font: { family: 'Space Grotesk', size: 12 },
               padding: 16,
               boxWidth: 12,
@@ -1352,12 +1355,8 @@ function drawPieChart(tokens, totalValue) {
             padding: 6,
             callbacks: {
               label(context) {
-                const { chart } = context;
                 const slice = currentPieSlices[context.dataIndex];
-                const visibleTotal = currentPieSlices.reduce(
-                  (sum, s, i) => (chart.getDataVisibility(i) ? sum + s.value : sum),
-                  0
-                );
+                const visibleTotal = currentPieSlices.reduce((sum, s) => sum + s.value, 0);
                 const percentage = visibleTotal > 0 ? ((slice.value / visibleTotal) * 100).toFixed(1) : '0.0';
                 if (slice.isOther) {
                   return [
@@ -1380,6 +1379,44 @@ function drawPieChart(tokens, totalValue) {
     });
     pieChartDrawing = false;
   });
+}
+
+function removePieHiddenIndicators() {
+  document.getElementById('pieAllHiddenMsg')?.remove();
+  document.getElementById('pieHiddenPartial')?.remove();
+}
+
+function renderPieHiddenIndicators(hasVisibleSlices) {
+  removePieHiddenIndicators();
+  if (hiddenTokenIds.size === 0) return;
+
+  const restoreLink = () => {
+    const link = document.createElement('a');
+    link.href = '#';
+    link.className = 'pie-restore-link';
+    link.textContent = 'Restore hidden tokens';
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      hiddenTokenIds.clear();
+      drawPieChart(allTokens, 0);
+    });
+    return link;
+  };
+
+  if (!hasVisibleSlices) {
+    hide(pieChart);
+    const msg = document.createElement('p');
+    msg.id = 'pieAllHiddenMsg';
+    msg.textContent = 'All tokens hidden — ';
+    msg.appendChild(restoreLink());
+    pieChart.insertAdjacentElement('beforebegin', msg);
+  } else {
+    const note = document.createElement('p');
+    note.id = 'pieHiddenPartial';
+    note.textContent = `${hiddenTokenIds.size} hidden — `;
+    note.appendChild(restoreLink());
+    pieChart.insertAdjacentElement('afterend', note);
+  }
 }
 
 // ════════════════════════════════════════
@@ -2099,7 +2136,7 @@ async function fetchLivePrices() {
             t.priceUnavailable = true;
           }
         });
-        if (updated) renderTokenList(allTokens);
+        if (updated) renderTokenList();
       }
     }
 
