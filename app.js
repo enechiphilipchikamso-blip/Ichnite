@@ -661,6 +661,7 @@ function resetAll() {
   hide(walletDisplay);
   hide(clearBtn);
   hide(totalNetWorth);
+  if (tokenSearch) tokenSearch.value = '';
   infoAccordions.forEach(el => show(el));
   infoAccordions.forEach(el => {
     const content = el.querySelector('.accordion-content');
@@ -755,6 +756,7 @@ async function handleSearch() {
   }, 5000);
   setSearchLoading(true);
   showAllSkeletons();
+  if (tokenSearch) tokenSearch.value = '';
   
   
     /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
@@ -1068,13 +1070,13 @@ function sortTokens(tokens) {
 }
 
 // Total value + pie chart always reflect the COMPLETE portfolio — never the filtered view
-function updateTokenTotalsAndChart(tokens) {
+function updateTokenTotalsAndChart(tokens, options = {}) {
   hide(tokenTotalSkeleton);
   const sorted = sortTokens(tokens);
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
   tokenTotalValue.textContent = formatUSD(totalValue);
   show(tokenTotalValue);
-  drawPieChart(sorted, totalValue);
+  drawPieChart(sorted, totalValue, options);
   updateNetWorth();
 }
 
@@ -1114,8 +1116,8 @@ function renderVisibleTokenRows() {
 }
 
 // Full render — used by initial fetch and live refresh. Updates everything.
-function renderTokenList() {
-  updateTokenTotalsAndChart(allTokens);
+function renderTokenList(options = {}) {
+  updateTokenTotalsAndChart(allTokens, options);
   renderVisibleTokenRows();
 }
 
@@ -1224,7 +1226,8 @@ let pieChartDrawing = false;
 let currentPieSlices = [];
 
 
-function drawPieChart(tokens, totalValue) {
+function drawPieChart(tokens, totalValue, options = {}) {
+  const { skipSpinner = false } = options;
   const allPriced = tokens.filter(t => hasKnownPrice(t));
 
   if (allPriced.length === 0) {
@@ -1236,14 +1239,18 @@ function drawPieChart(tokens, totalValue) {
     return;
   }
 
-  // Filter hidden mints BEFORE deciding top-5 vs Other — fresh every render,
-  // no special-casing for direction, no memory of prior position
-  const visiblePriced = allPriced.filter(t => !hiddenTokenIds.has(t.mint));
-  const sorted = [...visiblePriced].sort((a, b) => getTokenUsdValue(b) - getTokenUsdValue(a));
-  const top5 = sorted.slice(0, 5);
-  const rest = sorted.slice(5); // already excludes individually-hidden mints, unconditionally
+  // Rank the FULL priced list first — this decides top-5 vs Other membership.
+  // Hiding a token must never reshuffle who else counts as top-5.
+  const fullRanking = [...allPriced].sort((a, b) => getTokenUsdValue(b) - getTokenUsdValue(a));
+  const rankedTop5 = fullRanking.slice(0, 5);
+  const rankedRest = fullRanking.slice(5);
 
-  const slices = top5.map(t => ({
+  // NOW filter hidden state — only affects what actually renders
+  const visibleTop5 = rankedTop5.filter(t => !hiddenTokenIds.has(t.mint));
+  const visibleRestForOther = rankedRest.filter(t => !hiddenTokenIds.has(t.mint));
+  const otherHidden = hiddenTokenIds.has(OTHER_ID);
+
+  const slices = visibleTop5.map(t => ({
     id: t.mint,
     label: t.symbol || 'Unknown',
     value: getTokenUsdValue(t),
@@ -1253,10 +1260,9 @@ function drawPieChart(tokens, totalValue) {
     tokenCount: 1,
   }));
 
-  const otherHidden = hiddenTokenIds.has(OTHER_ID);
-  if (rest.length > 0 && !otherHidden) {
-    const otherValue = rest.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
-    const otherAmount = rest.reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
+  if (visibleRestForOther.length > 0 && !otherHidden) {
+    const otherValue = visibleRestForOther.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
+    const otherAmount = visibleRestForOther.reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
     slices.push({
       id: OTHER_ID,
       label: 'Other',
@@ -1264,7 +1270,7 @@ function drawPieChart(tokens, totalValue) {
       color: '#7c5cfc',
       isOther: true,
       amount: otherAmount,
-      tokenCount: rest.length,
+      tokenCount: visibleRestForOther.length,
     });
   }
 
@@ -1280,11 +1286,11 @@ function drawPieChart(tokens, totalValue) {
   pieChartDrawing = true;
 
   hide(pieSkeleton);
-  show(pieSpinner);
+  if (!skipSpinner) show(pieSpinner);
 
   requestAnimationFrame(() => {
     if (currentPieSlices.length === 0) {
-      // superseded by a later call that hid everything before this frame painted
+      // a later call emptied the pie before this frame painted — defer to it
       hide(pieSpinner);
       hide(pieChart);
       pieChartDrawing = false;
@@ -1302,6 +1308,7 @@ function drawPieChart(tokens, totalValue) {
       pieChartInstance.data.labels = labels;
       pieChartInstance.data.datasets[0].data = values;
       pieChartInstance.data.datasets[0].backgroundColor = colors;
+      pieChartInstance.resize();
       pieChartInstance.update();
       pieChartDrawing = false;
       return;
@@ -1335,7 +1342,7 @@ function drawPieChart(tokens, totalValue) {
               hiddenTokenIds.add(clickedSlice.id);
               chart.setActiveElements([]);
               chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-              drawPieChart(allTokens, 0);
+              drawPieChart(allTokens, 0, { skipSpinner: true });
             },
             labels: {
               color: '#7c5cfc',
@@ -1398,7 +1405,7 @@ function renderPieHiddenIndicators(hasVisibleSlices) {
     link.addEventListener('click', (e) => {
       e.preventDefault();
       hiddenTokenIds.clear();
-      drawPieChart(allTokens, 0);
+      drawPieChart(allTokens, 0, { skipSpinner: true });
     });
     return link;
   };
@@ -2136,7 +2143,7 @@ async function fetchLivePrices() {
             t.priceUnavailable = true;
           }
         });
-        if (updated) renderTokenList();
+        if (updated) renderTokenList({ skipSpinner: true });
       }
     }
 
