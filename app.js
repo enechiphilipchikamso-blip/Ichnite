@@ -1288,30 +1288,38 @@ function drawPieChart(tokens, totalValue, options = {}) {
   hide(pieSkeleton);
   if (!skipSpinner) show(pieSpinner);
 
-  requestAnimationFrame(() => {
-    if (currentPieSlices.length === 0) {
-      // a later call emptied the pie before this frame painted — defer to it
-      hide(pieSpinner);
-      hide(pieChart);
-      pieChartDrawing = false;
-      return;
-    }
+  requestAnimationFrame(() => {  
+    if (currentPieSlices.length === 0) {  
+      // a later call emptied the pie before this frame painted — defer to it  
+      hide(pieSpinner);  
+      hide(pieChart);  
+      pieChartDrawing = false;  
+      return;  
+    }  
+  
+    // Check BEFORE show() — this is true only when the canvas is coming
+    // back from display:none (e.g. restoring from "all tokens hidden").
+    // That's the one case resize() is actually needed for; forcing it on
+    // every render caused instant snaps and size jumps on normal updates.
+    const wasHidden = pieChart.classList.contains('hidden');
 
-    hide(pieSpinner);
-    show(pieChart);
-
-    const labels = currentPieSlices.map(s => s.label);
-    const values = currentPieSlices.map(s => s.value);
-    const colors = currentPieSlices.map(s => s.color);
-
-    if (pieChartInstance) {
-      pieChartInstance.data.labels = labels;
-      pieChartInstance.data.datasets[0].data = values;
-      pieChartInstance.data.datasets[0].backgroundColor = colors;
-      pieChartInstance.resize();
-      pieChartInstance.update();
-      pieChartDrawing = false;
-      return;
+    hide(pieSpinner);  
+    show(pieChart);  
+  
+    const labels = currentPieSlices.map(s => s.label);  
+    const values = currentPieSlices.map(s => s.value);  
+    const colors = currentPieSlices.map(s => s.color);  
+  
+    if (pieChartInstance) {  
+      pieChartInstance.data.labels = labels;  
+      pieChartInstance.data.datasets[0].data = values;  
+      pieChartInstance.data.datasets[0].backgroundColor = colors;  
+      if (wasHidden) {
+        pieChartInstance.resize();
+      }
+      pieChartInstance.update();  
+      pieChartDrawing = false;  
+      return;  
     }
 
     const ctx = pieChart.getContext('2d');
