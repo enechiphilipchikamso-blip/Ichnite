@@ -1235,6 +1235,7 @@ function drawPieChart(tokens, totalValue, options = {}) {
     hide(pieSkeleton);
     hide(pieSpinner);
     hide(pieChart);
+    document.getElementById('pieLegendCustom')?.replaceChildren();
     removePieHiddenIndicators();
     return;
   }
@@ -1275,10 +1276,12 @@ function drawPieChart(tokens, totalValue, options = {}) {
   }
 
   currentPieSlices = slices;
+  renderCustomPieLegend(slices);
   renderPieHiddenIndicators(slices.length > 0);
 
   if (slices.length === 0) {
     hide(pieChart);
+    document.getElementById('pieLegendCustom')?.replaceChildren();
     return;
   }
 
@@ -1340,25 +1343,7 @@ function drawPieChart(tokens, totalValue, options = {}) {
         maintainAspectRatio: true,
         plugins: {
           legend: {
-            display: true,
-            position: 'bottom',
-            align: 'center',
-            onClick: (e, legendItem, legend) => {
-              const chart = legend.chart;
-              const clickedSlice = currentPieSlices[legendItem.index];
-              if (!clickedSlice) return;
-              hiddenTokenIds.add(clickedSlice.id);
-              chart.setActiveElements([]);
-              chart.tooltip.setActiveElements([], { x: 0, y: 0 });
-              drawPieChart(allTokens, 0, { skipSpinner: true });
-            },
-            labels: {
-              color: '#7c5cfc',
-              font: { family: 'Space Grotesk', size: 12 },
-              padding: 16,
-              boxWidth: 12,
-              boxHeight: 12,
-            },
+            display: false, // replaced by #pieLegendCustom below the canvas — see renderCustomPieLegend()
           },
           tooltip: {
             enabled: true,
@@ -1396,6 +1381,36 @@ function drawPieChart(tokens, totalValue, options = {}) {
   });
 }
 
+function renderCustomPieLegend(slices) {
+  const container = document.getElementById('pieLegendCustom');
+  if (!container) return;
+  container.replaceChildren();
+
+  slices.forEach(slice => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'pie-legend-chip';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'pie-legend-swatch';
+    swatch.style.backgroundColor = slice.color;
+
+    const label = document.createElement('span');
+    label.className = 'pie-legend-label';
+    label.textContent = slice.label;
+
+    chip.appendChild(swatch);
+    chip.appendChild(label);
+
+    chip.addEventListener('click', () => {
+      hiddenTokenIds.add(slice.id);
+      drawPieChart(allTokens, 0, { skipSpinner: true });
+    });
+
+    container.appendChild(chip);
+  });
+}
+
 function removePieHiddenIndicators() {
   document.getElementById('pieAllHiddenMsg')?.remove();
   document.getElementById('pieHiddenPartial')?.remove();
@@ -1430,7 +1445,8 @@ function renderPieHiddenIndicators(hasVisibleSlices) {
     note.id = 'pieHiddenPartial';
     note.textContent = `${hiddenTokenIds.size} hidden — `;
     note.appendChild(restoreLink());
-    pieChart.insertAdjacentElement('afterend', note);
+    const legendEl = document.getElementById('pieLegendCustom');
+    (legendEl || pieChart).insertAdjacentElement('afterend', note);
   }
 }
 
