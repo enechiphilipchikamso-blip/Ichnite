@@ -1757,6 +1757,37 @@ grid-template-columns: repeat(4, 1fr);
   cursor: pointer;
 }
 
+.pie-legend-custom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 16px;
+  margin-top: 16px;
+}
+
+.pie-legend-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.pie-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.pie-legend-label {
+  color: #7c5cfc;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+}
+
 /*
 #floatingLogosContainer {
   position: fixed;
