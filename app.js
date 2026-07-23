@@ -1342,6 +1342,12 @@ function drawPieChart(tokens, totalValue, options = {}) {
       options: {
         responsive: true,
         maintainAspectRatio: true,
+        layout: {
+          // Reserves margin around the circle so hoverOffset (8px) has room
+          // to push a hovered slice outward without hitting the canvas edge.
+          // Needed now that the legend no longer reserves space internally.
+          padding: 16,
+        },
         plugins: {
           legend: {
             display: false, // replaced by #pieLegendCustom below the canvas — see renderCustomPieLegend()
