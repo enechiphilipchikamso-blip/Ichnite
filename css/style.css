@@ -417,10 +417,17 @@ p {
 }
 
 /* ── Pie Chart ── */
+.pie-chart-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  height: 280px;
+  margin: 16px auto 0;
+}
+
 canvas#pieChart {
   width: 100% !important;
-  max-width: 280px;
-  margin: 16px auto 0;
+  height: 100% !important;
   display: block;
   border-radius: 12px;
 }

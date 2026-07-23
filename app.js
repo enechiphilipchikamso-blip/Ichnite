@@ -602,6 +602,7 @@ function showAllSkeletons() {
   hide(document.getElementById('tokenScrollFade'));
   hiddenTokenIds.clear();
   removePieHiddenIndicators();
+  document.getElementById('pieLegendCustom')?.replaceChildren();;
   show(pieSkeleton);
   hide(pieSpinner);
   hide(pieChart);
