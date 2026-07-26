@@ -71,8 +71,12 @@ header {
 
 h1 {
   font-size: clamp(2rem, 5vw, 4rem);
-  color: var(--blue);
   letter-spacing: 2px;
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent; /* Safari */
 }
 
 .subtitle {

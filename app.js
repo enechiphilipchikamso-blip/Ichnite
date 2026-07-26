@@ -1,5 +1,5 @@
 // ════════════════════════════════════════
-// ── SolTrace app.js ──
+// ── Ichnite app.js ──
 // Frontend JavaScript — connects to server.js backend
 // Never calls external APIs directly — all calls go through /api routes
 // ════════════════════════════════════════
@@ -168,6 +168,8 @@ const TOKEN_COLORS = Object.freeze({
   FDUSD: '#4AFAB4',
   Cake: '#D1884F',
   Ton: '#00A8E0',
+  HOOD: '#00C805',
+  GME: '#FD0000',
   DEFAULT: '#7c5cfc',
 });
 
@@ -287,7 +289,7 @@ if ('serviceWorker' in navigator) {
     // Derive base path dynamically for flexible deployment
     const swPath = new URL('sw.js', window.location.href).pathname;
     navigator.serviceWorker.register(swPath)
-      .then(() => console.log('✅ SolTrace SW registered'))
+      .then(() => console.log('✅ Ichnite SW registered'))
       .catch((err) => console.warn('SW registration failed:', err));
   });
 }
@@ -459,7 +461,7 @@ function showError(type, customMessage) {
     networkErrorMsg.textContent = 'You are offline. Please check your connection.';
     show(networkErrorMsg);
   } else if (type === 'server') {
-    networkErrorMsg.textContent = 'SolTrace server is having issues. Please try again shortly.';
+    networkErrorMsg.textContent = 'Ichnite server is having issues. Please try again shortly.';
     show(networkErrorMsg);
   } else if (type === 'ratelimit') {
     networkErrorMsg.textContent = 'Too many requests. Please wait a moment.';
@@ -496,7 +498,7 @@ function resetInputState() {
 
 function getSearchHistory() {
   try {
-    return JSON.parse(localStorage.getItem('soltraceHistory') || '[]');
+    return JSON.parse(localStorage.getItem('IchniteHistory') || '[]');
   } catch {
     return [];
   }
@@ -507,7 +509,7 @@ function saveToHistory(address) {
     let history = getSearchHistory().filter(a => a !== address);
     history.unshift(address);
     history = history.slice(0, CONFIG.MAX_HISTORY);
-    localStorage.setItem('soltraceHistory', JSON.stringify(history));
+    localStorage.setItem('IchniteHistory', JSON.stringify(history));
   } catch { /* silent fail */ }
 }
 
@@ -558,7 +560,7 @@ function showRemoveConfirm(addressToRemove) {
   removeBtn.textContent = 'Remove';
   removeBtn.addEventListener('click', () => {
     let history = getSearchHistory().filter(a => a !== addressToRemove);
-    localStorage.setItem('soltraceHistory', JSON.stringify(history));
+    localStorage.setItem('IchniteHistory', JSON.stringify(history));
     renderSearchHistory();
     document.body.removeChild(overlay);
   });
@@ -676,7 +678,7 @@ function resetAll() {
   removePieHiddenIndicators();
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
   if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
-  document.title = 'SolTrace';
+  document.title = 'Ichnite';
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
     btn.style.transform = '';
@@ -699,11 +701,22 @@ walletInput.addEventListener('input', () => {
   if (walletInput.value.length > CONFIG.MAX_ADDRESS_LENGTH) {
     walletInput.value = walletInput.value.slice(0, CONFIG.MAX_ADDRESS_LENGTH);
   }
+
   clearTimeout(inputValidTimeout);
+  inputValidTimeout = null;
+  walletInput.classList.remove('input-valid');
+
   resetInputState();
+
   if (navigator.onLine) {
     hideAllMessages();
   }
+});
+
+walletInput.addEventListener('focus', () => {
+  clearTimeout(inputValidTimeout);
+  inputValidTimeout = null;
+  walletInput.classList.remove('input-valid');
 });
 
 // ════════════════════════════════════════
@@ -761,7 +774,7 @@ async function handleSearch() {
   
   
     /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
-  document.title = 'SolTrace — Wallet Results..';
+  document.title = 'Ichnite — Wallet Results..';
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
   show(clearBtn);

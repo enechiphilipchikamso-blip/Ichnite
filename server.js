@@ -1,4 +1,4 @@
-// ── SolTrace Backend Server ──
+// ── Ichnite Backend Server ──
 // Proxy server that keeps API keys hidden from the browser
 // All external API calls go through here — never directly from app.js
 
@@ -42,14 +42,14 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const allowedOrigins =
   NODE_ENV === 'development'
     ? ['http://localhost:3000', 'http://127.0.0.1:3000', new RegExp(`^https://${process.env.CODESPACE_NAME}-\\d+\\.app\\.github\\.dev$`)]
-    : ['https://soltrace.vercel.app'];
+    : ['https://Ichnite.vercel.app'];
 
 // ── Security Middleware — applied before all routes ──
 
 // 1. Helmet — sets secure HTTP headers
 app.use(helmet());
 
-// 2. CORS — only allow requests from SolTrace frontend
+// 2. CORS — only allow requests from Ichnite frontend
 const corsOptions = {  
   origin: function (origin, callback) {  
     // Allow requests with no Origin (Postman, curl, server-to-server)  
@@ -709,7 +709,7 @@ app.use((err, req, res, next) => {
 // ════════════════════════════════════════
 app.listen(PORT, () => {
   
-  console.log(`✅ SolTrace server running on http://localhost:${PORT}`);
+  console.log(`✅ Ichnite server running on http://localhost:${PORT}`);
   console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'} (metadata + fallback structural data)`);
   console.log(`🔑 Shyft API: ${SHYFT_API_KEY ? 'Connected' : '⚠️  Not configured'} (structural data fallback only)`);
   console.log(`🔑 Jupiter Price V3: ${JUPITER_API_KEY ? 'Keyed (1 req/sec)' : 'Keyless (0.5 req/sec)'} (primary token pricing)`);

@@ -1,7 +1,7 @@
 {
-  "id": "/?source=soltrace_pwa",
-  "name": "SolTrace",
-  "short_name": "SolTrace",
+  "id": "/?source=Ichnite_pwa",
+  "name": "Ichnite",
+  "short_name": "Ichnite",
   "description": "Check any Solana wallet instantly. View SOL balance, token holdings, NFTs and transaction history.",
   "start_url": "/?source=pwa",
   "scope": "/",
