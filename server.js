@@ -99,8 +99,20 @@ const apiLimiter = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: {
-    error: 'Too many requests. Please try again later.',
+  message: (req, res) => {
+    // req.rateLimit.resetTime is a Date — the documented, reliable way to
+    // access reset info, unlike reading a header back mid-response
+    const resetTime = req.rateLimit?.resetTime;
+    const secondsLeft = resetTime
+    ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
+    : 0;
+    const minutes = Math.floor(secondsLeft / 60);
+    const seconds = secondsLeft % 60;
+    return {
+      error: 'Too many requests. Please try again later.',
+      timeRemaining: `${minutes}m ${seconds}s`,
+      retryAfterSeconds: secondsLeft,
+    };
   },
 });
 

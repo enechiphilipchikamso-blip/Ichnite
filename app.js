@@ -236,6 +236,9 @@ let solPriceFailed = false;
 let solAgeFailed = false;
 let inputValidTimeout = null;
 let failedFetchCount = 0;
+let lastRateLimitInfo = null;
+let rateLimitedUntil = null;
+let rateLimitTickInterval = null;
 
 
 // Improvement 1: AbortController — cancel stale requests
@@ -470,6 +473,47 @@ function hideAllMessages() {
   hide(emptySearchMsg);
 }
 
+function startRateLimitCountdown(seconds) {
+  clearInterval(rateLimitTickInterval);
+  rateLimitedUntil = Date.now() + seconds * 1000;
+  searchBtn.disabled = true;
+  hideAllMessages();
+  const msgEl = document.getElementById('rateLimitMsg');
+  show(msgEl);
+
+  const tick = () => {
+    const remaining = Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000));
+    const m = Math.floor(remaining / 60);
+    const s = String(remaining % 60).padStart(2, '0');
+    msgEl.textContent = `You've reached your limit. Please try again in ${m}:${s}`;
+    if (remaining <= 0) {
+      clearInterval(rateLimitTickInterval);
+      hide(msgEl);
+      searchBtn.disabled = false;
+      rateLimitedUntil = null;
+    }
+  };
+  tick();
+  rateLimitTickInterval = setInterval(tick, 1000);
+}
+
+async function checkRateLimitGate() {
+  try {
+    const res = await fetch(`${API_BASE}/api/sol-price`);
+    if (res.status === 429) {
+      const body = await res.json().catch(() => ({}));
+      const retryAfter = Number(body.retryAfterSeconds);
+      const fallbackSeconds = 15 * 60; // matches server windowMs — used only if retryAfterSeconds is missing/malformed
+      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : fallbackSeconds;
+      startRateLimitCountdown(secondsToUse);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // Improvement 10: Differentiate offline and server errors
 function showError(type, customMessage) {
   hideAllMessages();
@@ -501,10 +545,12 @@ function showError(type, customMessage) {
 // Improvement 10: Parse response status to show correct error
 async function handleResponse(response) {
   if (response.ok) return response.json();
-  if (response.status === 429) throw { type: 'ratelimit' };
+  if (response.status === 429) {
+    const body = await response.json().catch(() => ({}));
+    lastRateLimitInfo = { retryAfterSeconds: body.retryAfterSeconds || 0 };
+    throw { type: 'ratelimit' };
+  }
   if (response.status === 404) throw { type: 'notfound' };
-  // A response arriving at all means our own server responded —
-  // any failure past this point is an upstream Solana/Helius issue
   throw { type: 'solana-delay' };
 }
 
@@ -778,6 +824,11 @@ async function handleSearch() {
   }
   currentAbortController = new AbortController();
   
+  const wasAlreadyShowingResults = !resultsSection.classList.contains('hidden');
+  if (!wasAlreadyShowingResults) {
+    if (await checkRateLimitGate()) return;
+  }
+
   lastSearchTime = now;
   currentWalletAddress = rawAddress;
   walletInput.classList.add('input-valid');
@@ -794,7 +845,7 @@ async function handleSearch() {
   
   
     /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
-  document.title = 'Ichnite — Wallet Results..';
+  document.title = 'Ichnite - Wallet Results..';
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
   show(clearBtn);
@@ -817,17 +868,20 @@ async function handleSearch() {
     solPriceFailed = false;
     solAgeFailed = false;
     failedFetchCount = 0;
+    lastRateLimitInfo = null;
     
-  const results = await Promise.allSettled([
-    fetchSolBalance(currentWalletAddress),
-    fetchTokens(currentWalletAddress),
-    fetchNFTs(currentWalletAddress),
-    fetchTransactions(currentWalletAddress),
-  ]);
-  updateNetWorth();
-   if (failedFetchCount >= 4) {
+  await Promise.allSettled([
+      fetchSolBalance(currentWalletAddress),
+      fetchTokens(currentWalletAddress),
+      fetchNFTs(currentWalletAddress),
+      fetchTransactions(currentWalletAddress),
+    ]);
+    updateNetWorth();
+    if (lastRateLimitInfo) {
+      startRateLimitCountdown(lastRateLimitInfo.retryAfterSeconds);
+    } else if (failedFetchCount >= 4) {
       showError('server');
-   }
+    }
     // Already handled above using failedFetchCount.
     
     } finally {
@@ -886,8 +940,9 @@ async function fetchSolBalance(address) {
     return;
   }
 
-  // Past this point, the backend IS reachable — apply independent per-section logic.
-  solFetchFailed = false;
+// Past this point, the backend IS reachable — per-section logic applies.
+  // solFetchFailed is computed at the END of this function, once both
+  // sections have actually been evaluated — not forced false here.
 
   // ── Balance section ──
   if (balanceResult.status === 'fulfilled' && balanceResult.value.ok) {
@@ -955,6 +1010,7 @@ async function fetchSolBalance(address) {
   }
 
   revealCard(solBalanceRow.closest('.card'));
+  solFetchFailed = solBalanceFailed && solPriceFailed;
 }
 
 // ════════════════════════════════════════
@@ -990,7 +1046,7 @@ async function fetchTokens(address) {
 
   } catch (error) {
     tokenFetchFailed = true;
-    if (error.name === 'AbortError') return;
+    if (error?.name === 'AbortError') return;
     tokenDataAvailable = false;
     failedFetchCount++;
     console.error('Token error:', error);
@@ -1521,20 +1577,25 @@ async function fetchNFTs(address) {
     revealCard(nftList.closest('.card'));
 
   } catch (error) {
-    if (error.name === 'AbortError') return;
-    failedFetchCount++;
-    console.error('NFT error:', error.message);
-    nftGrid.replaceChildren();
-    nftList.replaceChildren();
+  if (error?.name === 'AbortError') return;
 
-    hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
+  failedFetchCount++;
 
-    const msg = document.createElement('p');
-    msg.className = 'empty-msg';
-     msg.textContent = 'Unable to load NFTs';
+  console.error('NFT error:', error);
+  console.error('NFT error message:', error?.message);
+  console.error('NFT error stack:', error?.stack);
 
-    nftList.appendChild(msg);
-  }
+  nftGrid.replaceChildren();
+  nftList.replaceChildren();
+
+  hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
+
+  const msg = document.createElement('p');
+  msg.className = 'empty-msg';
+  msg.textContent = 'Unable to load NFTs';
+
+  nftList.appendChild(msg);
+}
 }
 
 function renderNFTList(nfts) {
@@ -1700,7 +1761,7 @@ async function fetchTransactions(address) {
     
 
   } catch (error) {
-    if (error.name === 'AbortError') return;
+    if (error?.name === 'AbortError') return;
     solAgeFailed = true;
     walletAgeEl.textContent = 'Age unavailable';
     show(document.getElementById('walletAgeRow'));
