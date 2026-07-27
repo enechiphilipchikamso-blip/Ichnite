@@ -832,10 +832,7 @@ async function handleSearch() {
   }
   currentAbortController = new AbortController();
   
-  const wasAlreadyShowingResults = !resultsSection.classList.contains('hidden');
-  if (!wasAlreadyShowingResults) {
-    if (await checkRateLimitGate()) return;
-  }
+  if (await checkRateLimitGate()) return;
 
   lastSearchTime = now;
   currentWalletAddress = rawAddress;
