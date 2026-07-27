@@ -473,6 +473,8 @@ function hideAllMessages() {
   hide(emptySearchMsg);
 }
 
+const RATE_LIMIT_UNLOCK_BUFFER_MS = 1200; // absorbs clock drift + 1s tick granularity + one round trip
+
 function startRateLimitCountdown(seconds) {
   clearInterval(rateLimitTickInterval);
   rateLimitedUntil = Date.now() + seconds * 1000;
@@ -486,7 +488,9 @@ function startRateLimitCountdown(seconds) {
     const m = Math.floor(remaining / 60);
     const s = String(remaining % 60).padStart(2, '0');
     msgEl.textContent = `You've reached your limit. Please try again in ${m}:${s}`;
-    if (remaining <= 0) {
+    // Display can hit 0:00 slightly before we actually unlock — the extra buffer
+    // means a click right at "0:00" can no longer land inside the server's window.
+    if (Date.now() >= rateLimitedUntil + RATE_LIMIT_UNLOCK_BUFFER_MS) {
       clearInterval(rateLimitTickInterval);
       hide(msgEl);
       searchBtn.disabled = false;
@@ -790,6 +794,10 @@ walletInput.addEventListener('focus', () => {
 // ════════════════════════════════════════
 
 async function handleSearch() {
+  if (rateLimitedUntil) {
+    return; // still locked out — the countdown message is already visible, nothing more to do
+  }
+
   if (!navigator.onLine) {
     showError('offline');
     return;
