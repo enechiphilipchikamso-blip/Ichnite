@@ -72,7 +72,11 @@ header {
 h1 {
   font-size: clamp(2rem, 5vw, 4rem);
   letter-spacing: 2px;
-  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  background: linear-gradient(90deg, 
+  #2563eb 0% 33.33%, 
+  #3b82f6 33.33% 66.66%, 
+  #2563eb 66.66% 100%
+);
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
