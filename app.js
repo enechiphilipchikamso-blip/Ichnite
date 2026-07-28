@@ -505,13 +505,31 @@ async function checkRateLimitGate() {
   try {
     const res = await fetch(`${API_BASE}/api/sol-price`);
     if (res.status === 429) {
-      const body = await res.json().catch(() => ({}));
-      const retryAfter = Number(body.retryAfterSeconds);
-      const fallbackSeconds = 15 * 60; // matches server windowMs — used only if retryAfterSeconds is missing/malformed
-      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : fallbackSeconds;
-      startRateLimitCountdown(secondsToUse);
-      return true;
-    }
+  const body = await res.json().catch(() => ({}));
+  const retryAfter = Number(body.retryAfterSeconds);
+  const fallbackSeconds = 15 * 60;
+  const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
+    ? retryAfter
+    : fallbackSeconds;
+
+  startRateLimitCountdown(secondsToUse);
+
+  // Show the same SOL market unavailable state immediately
+  solPriceFailed = true;
+  solPriceChange.className = 'sol-change';
+
+  const marketPlaceholder = document.getElementById('solMarketUnavailable');
+  const marketValuesRow1 = document.getElementById('solMarketPriceRow');
+  const marketValuesRow2 = document.getElementById('solMarketChangeRow');
+
+  show(document.getElementById('solMarketSection'));
+  hide(marketValuesRow1);
+  hide(marketValuesRow2);
+  show(marketPlaceholder);
+  hide(solBalanceUsd);
+
+  return true;
+}
     return false;
   } catch {
     return false;
@@ -2163,7 +2181,7 @@ function updateNetWorth() {
     const msg = document.createElement('p');
     msg.id = 'netWorthError';
     msg.className = 'empty-msg';
-    msg.textContent = 'This wallet has no assets';
+    msg.textContent = 'Unable to load total net worth';
     totalNetWorth.appendChild(msg);
     return;
   }
@@ -2176,7 +2194,7 @@ function updateNetWorth() {
     const msg = document.createElement('p');
     msg.id = 'netWorthEmpty';
     msg.className = 'empty-msg';
-    msg.textContent = 'Unable to load total net worth';
+    msg.textContent = 'This wallet has no assets';
     totalNetWorth.appendChild(msg);
     return;
   }
