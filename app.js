@@ -1047,11 +1047,11 @@ async function fetchTokens(address) {
     
     // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
-    renderTokenList();
+    renderTokenList(allTokens);
 
   } catch (error) {
+    if (error?.name === 'AbortError') return; // superseded by a newer search — don't touch any state
     tokenFetchFailed = true;
-    if (error?.name === 'AbortError') return;
     tokenDataAvailable = false;
     failedFetchCount++;
     console.error('Token error:', error);
@@ -1062,7 +1062,6 @@ async function fetchTokens(address) {
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load token holdings';
     tokenList.replaceChildren(msg);
-    
   }
 }
 
@@ -2145,11 +2144,14 @@ yearOptions.forEach(option => {
 function updateNetWorth() {
   document.getElementById('netWorthError')?.remove();
   document.getElementById('netWorthEmpty')?.remove();
+  document.getElementById('netWorthPending')?.remove();
+  document.getElementById('netWorthPartial')?.remove();
 
+  const solContributionOk = !solBalanceFailed && !solPriceFailed;
+  const tokensOk = !tokenFetchFailed;
 
-  // Genuinely empty portfolio — both fetches succeeded, wallet just holds nothing.
-  // Distinct from a failure state: nothing went wrong, there's simply no value to show.
-  if (!solFetchFailed && !tokenFetchFailed && currentSolBalance === 0 && allTokens.length === 0) {
+  // Genuinely empty portfolio — every input succeeded, wallet just holds nothing.
+  if (solContributionOk && tokensOk && currentSolBalance === 0 && allTokens.length === 0) {
     hide(netWorthSkeleton);
     hide(netWorthValue);
     const msg = document.createElement('p');
@@ -2160,15 +2162,12 @@ function updateNetWorth() {
     return;
   }
 
-  // Wallet holds real tokens but none are priced yet, and has 0 SOL —
-  // re-evaluated on every call, so this clears itself automatically once
-  // live pricing resolves for any of them
+  // Wallet holds real tokens but none are priced yet, and has 0 SOL — every input succeeded.
   if (
-    !solFetchFailed && !tokenFetchFailed &&
+    solContributionOk && tokensOk &&
     currentSolBalance === 0 && allTokens.length > 0 &&
     allTokens.every(t => t.priceUnavailable)
   ) {
-    document.getElementById('netWorthEmpty')?.remove();
     hide(netWorthSkeleton);
     hide(netWorthValue);
     const msg = document.createElement('p');
@@ -2178,10 +2177,9 @@ function updateNetWorth() {
     totalNetWorth.appendChild(msg);
     return;
   }
-  
-  document.getElementById('netWorthPending')?.remove();
 
-  if (solFetchFailed && tokenFetchFailed) {
+  // Nothing usable at all — neither side can be trusted.
+  if (!solContributionOk && !tokensOk) {
     hide(netWorthSkeleton);
     hide(netWorthValue);
     const msg = document.createElement('p');
@@ -2191,12 +2189,10 @@ function updateNetWorth() {
     totalNetWorth.appendChild(msg);
     return;
   }
-  
-  // Use stored state variables — no extra API call needed
-  
+
   try {
-    const solValueUSD = currentSolBalance * currentSolPrice;
-    const tokenTotal = allTokens.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
+    const solValueUSD = solContributionOk ? currentSolBalance * currentSolPrice : 0;
+    const tokenTotal = tokensOk ? allTokens.reduce((sum, t) => sum + getTokenUsdValue(t), 0) : 0;
     const total = solValueUSD + tokenTotal;
 
     netWorthValue.textContent = formatUSD(total);
@@ -2204,6 +2200,21 @@ function updateNetWorth() {
     hide(netWorthSkeleton);
     show(netWorthLabel);
     show(netWorthValue);
+
+    // One side failed — this number is real but incomplete. Say so, rather than
+    // let a partial sum look like a complete, trustworthy total.
+    if (!solContributionOk || !tokensOk) {
+      const partial = document.createElement('p');
+      partial.id = 'netWorthPartial';
+      partial.className = 'empty-msg';
+      let reason;
+      if (solBalanceFailed) reason = 'SOL balance unavailable';
+      else if (solPriceFailed) reason = 'SOL price unavailable';
+      else reason = 'Token data unavailable';
+      partial.textContent = `${reason} — total may be incomplete`;
+      totalNetWorth.appendChild(partial);
+    }
+
     if (!netWorthRevealed) {
       revealCard(totalNetWorth);
       netWorthRevealed = true;
@@ -2273,8 +2284,10 @@ async function fetchLivePrices() {
             t.priceUnavailable = true;
           }
         });
-        if (updated) renderTokenList({ skipSpinner: true });
-      }
+        if (updated) {
+    renderTokenList(allTokens, { skipSpinner: true });
+            }
+        }
     }
 
     updateNetWorth();
