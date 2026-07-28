@@ -502,18 +502,90 @@ function startRateLimitCountdown(seconds) {
 }
 
 function showRateLimitBlockedState() {
-  solPriceFailed = true;
-  solPriceChange.className = 'sol-change';
+  show(resultsSection);
 
-  const marketPlaceholder = document.getElementById('solMarketUnavailable');
-  const marketValuesRow1 = document.getElementById('solMarketPriceRow');
-  const marketValuesRow2 = document.getElementById('solMarketChangeRow');
+  // Total Net Worth
+  hide(netWorthSkeleton);
+  hide(netWorthValue);
+  document.getElementById('netWorthError')?.remove();
+  document.getElementById('netWorthEmpty')?.remove();
+  document.getElementById('netWorthPending')?.remove();
+  const netWorthMsg = document.createElement('p');
+  netWorthMsg.id = 'netWorthError';
+  netWorthMsg.className = 'empty-msg';
+  netWorthMsg.textContent = 'Temporarily unavailable';
+  totalNetWorth.appendChild(netWorthMsg);
+  show(totalNetWorth);
+  solBalanceFailed = true;
+  solPriceFailed = true;
+  solAgeFailed = true;
+  tokenFetchFailed = true;
+
+  // SOL Balance card
+  hide(solSkeleton);
+  hide(solBalanceRow);
+  hide(document.getElementById('solEmptyMsg'));
+  document.getElementById('solBalanceError')?.remove();
+  const solErrorMsg = document.createElement('p');
+  solErrorMsg.id = 'solBalanceError';
+  solErrorMsg.className = 'empty-msg';
+  solErrorMsg.textContent = 'Temporarily unavailable';
+  solBalanceRow.insertAdjacentElement('afterend', solErrorMsg);
 
   show(document.getElementById('solMarketSection'));
-  hide(marketValuesRow1);
-  hide(marketValuesRow2);
-  show(marketPlaceholder);
+  hide(document.getElementById('solMarketPriceRow'));
+  hide(document.getElementById('solMarketChangeRow'));
+  show(document.getElementById('solMarketUnavailable'));
   hide(solBalanceUsd);
+  solPriceChange.className = 'sol-change';
+
+  walletAgeEl.textContent = 'Age unavailable';
+  show(document.getElementById('walletAgeRow'));
+
+  // Token Holdings
+  hide(tokenSkeleton);
+  hide(tokenTotalSkeleton);
+  hide(tokenTotalValue);
+  hide(pieSkeleton);
+  hide(pieSpinner);
+  hide(pieChart);
+  document.getElementById('pieLegendCustom')?.replaceChildren();
+  const tokenMsg = document.createElement('p');
+  tokenMsg.className = 'empty-msg';
+  tokenMsg.textContent = 'Temporarily unavailable';
+  tokenList.replaceChildren(tokenMsg);
+  show(tokenList);
+
+  // NFTs
+  hide(nftSkeleton);
+  nftGrid.replaceChildren();
+  show(nftGrid);
+  const nftMsg = document.createElement('p');
+  nftMsg.className = 'empty-msg';
+  nftMsg.textContent = 'Temporarily unavailable';
+  nftList.replaceChildren(nftMsg);
+  show(nftList);
+
+  // Wallet Activity + Recent Transactions
+  hide(barSkeleton);
+  hide(barSpinner);
+  hide(barChart);
+  barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
+  document.getElementById('barChartError')?.remove();
+  document.getElementById('barChartEmpty')?.remove();
+  const barMsg = document.createElement('p');
+  barMsg.id = 'barChartError';
+  barMsg.className = 'empty-msg';
+  barMsg.textContent = 'Temporarily unavailable';
+  barChart.closest('.chart-scroll-wrapper')?.appendChild(barMsg);
+  barDataAvailable = false;
+
+  hide(txSkeleton);
+  const txMsg = document.createElement('p');
+  txMsg.className = 'empty-msg';
+  txMsg.textContent = 'Temporarily unavailable';
+  last7txList.replaceChildren(txMsg);
+  show(last7txList);
 }
 
 async function checkRateLimitGate() {
