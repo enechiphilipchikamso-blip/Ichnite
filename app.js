@@ -832,10 +832,15 @@ async function handleSearch() {
   }
   currentAbortController = new AbortController();
   
-  if (await checkRateLimitGate()) return;
+  setSearchLoading(true); // instant feedback the moment Trace is pressed, while the gate check round-trips
+const isRateLimited = await checkRateLimitGate();
+if (isRateLimited) {
+  setSearchLoading(false); // revert button text — disabled state is owned by the countdown itself now
+  return;
+}
 
-  lastSearchTime = now;
-  currentWalletAddress = rawAddress;
+lastSearchTime = now;
+currentWalletAddress = rawAddress;
   walletInput.classList.add('input-valid');
   walletInput.classList.remove('input-error');
   hideAllMessages();
@@ -2145,29 +2150,38 @@ function updateNetWorth() {
   document.getElementById('netWorthError')?.remove();
   document.getElementById('netWorthEmpty')?.remove();
   document.getElementById('netWorthPending')?.remove();
-  document.getElementById('netWorthPartial')?.remove();
 
-  const solContributionOk = !solBalanceFailed && !solPriceFailed;
-  const tokensOk = !tokenFetchFailed;
+  // A product/sum needs EVERY input valid — if either half of the math can't
+  // be trusted, the total can't be trusted. Never silently treat a failed
+  // fetch's untouched default (0 / empty array) as a real zero.
+  const solPortionInvalid = solBalanceFailed || solPriceFailed;
+  const tokenPortionInvalid = tokenFetchFailed;
 
-  // Genuinely empty portfolio — every input succeeded, wallet just holds nothing.
-  if (solContributionOk && tokensOk && currentSolBalance === 0 && allTokens.length === 0) {
+  if (solPortionInvalid || tokenPortionInvalid) {
     hide(netWorthSkeleton);
     hide(netWorthValue);
     const msg = document.createElement('p');
-    msg.id = 'netWorthEmpty';
+    msg.id = 'netWorthError';
     msg.className = 'empty-msg';
     msg.textContent = 'This wallet has no assets';
     totalNetWorth.appendChild(msg);
     return;
   }
 
-  // Wallet holds real tokens but none are priced yet, and has 0 SOL — every input succeeded.
-  if (
-    solContributionOk && tokensOk &&
-    currentSolBalance === 0 && allTokens.length > 0 &&
-    allTokens.every(t => t.priceUnavailable)
-  ) {
+  // Past this point, both inputs are confirmed genuinely valid — safe to
+  // treat 0 / empty as real values now, not failure-masked defaults.
+  if (currentSolBalance === 0 && allTokens.length === 0) {
+    hide(netWorthSkeleton);
+    hide(netWorthValue);
+    const msg = document.createElement('p');
+    msg.id = 'netWorthEmpty';
+    msg.className = 'empty-msg';
+    msg.textContent = 'Unable to load total net worth';
+    totalNetWorth.appendChild(msg);
+    return;
+  }
+
+  if (currentSolBalance === 0 && allTokens.length > 0 && allTokens.every(t => t.priceUnavailable)) {
     hide(netWorthSkeleton);
     hide(netWorthValue);
     const msg = document.createElement('p');
@@ -2178,21 +2192,9 @@ function updateNetWorth() {
     return;
   }
 
-  // Nothing usable at all — neither side can be trusted.
-  if (!solContributionOk && !tokensOk) {
-    hide(netWorthSkeleton);
-    hide(netWorthValue);
-    const msg = document.createElement('p');
-    msg.id = 'netWorthError';
-    msg.className = 'empty-msg';
-    msg.textContent = 'Unable to load total net worth';
-    totalNetWorth.appendChild(msg);
-    return;
-  }
-
   try {
-    const solValueUSD = solContributionOk ? currentSolBalance * currentSolPrice : 0;
-    const tokenTotal = tokensOk ? allTokens.reduce((sum, t) => sum + getTokenUsdValue(t), 0) : 0;
+    const solValueUSD = currentSolBalance * currentSolPrice;
+    const tokenTotal = allTokens.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
     const total = solValueUSD + tokenTotal;
 
     netWorthValue.textContent = formatUSD(total);
@@ -2200,21 +2202,6 @@ function updateNetWorth() {
     hide(netWorthSkeleton);
     show(netWorthLabel);
     show(netWorthValue);
-
-    // One side failed — this number is real but incomplete. Say so, rather than
-    // let a partial sum look like a complete, trustworthy total.
-    if (!solContributionOk || !tokensOk) {
-      const partial = document.createElement('p');
-      partial.id = 'netWorthPartial';
-      partial.className = 'empty-msg';
-      let reason;
-      if (solBalanceFailed) reason = 'SOL balance unavailable';
-      else if (solPriceFailed) reason = 'SOL price unavailable';
-      else reason = 'Token data unavailable';
-      partial.textContent = `${reason} — total may be incomplete`;
-      totalNetWorth.appendChild(partial);
-    }
-
     if (!netWorthRevealed) {
       revealCard(totalNetWorth);
       netWorthRevealed = true;
