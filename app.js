@@ -501,20 +501,7 @@ function startRateLimitCountdown(seconds) {
   rateLimitTickInterval = setInterval(tick, 1000);
 }
 
-async function checkRateLimitGate() {
-  try {
-    const res = await fetch(`${API_BASE}/api/sol-price`);
-    if (res.status === 429) {
-  const body = await res.json().catch(() => ({}));
-  const retryAfter = Number(body.retryAfterSeconds);
-  const fallbackSeconds = 15 * 60;
-  const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
-    ? retryAfter
-    : fallbackSeconds;
-
-  startRateLimitCountdown(secondsToUse);
-
-  // Show the same SOL market unavailable state immediately
+function showRateLimitBlockedState() {
   solPriceFailed = true;
   solPriceChange.className = 'sol-change';
 
@@ -527,12 +514,31 @@ async function checkRateLimitGate() {
   hide(marketValuesRow2);
   show(marketPlaceholder);
   hide(solBalanceUsd);
-
-  return true;
 }
+
+async function checkRateLimitGate() {
+  try {
+    const res = await fetch(`${API_BASE}/api/rate-limit-status`);
+
+    if (!res.ok) return false; // fail open — don't block on a failed status check
+
+    const data = await res.json();
+
+    if (data.rateLimited) {
+      const retryAfter = Number(data.retryAfterSeconds);
+      const fallbackSeconds = 15 * 60;
+      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
+        ? retryAfter
+        : fallbackSeconds;
+
+      startRateLimitCountdown(secondsToUse);
+      return true;
+    }
+
     return false;
-  } catch {
-    return false;
+  } catch (error) {
+    console.warn('Rate-limit status check failed:', error);
+    return false; // fail open
   }
 }
 
@@ -854,6 +860,7 @@ async function handleSearch() {
 const isRateLimited = await checkRateLimitGate();
 if (isRateLimited) {
   setSearchLoading(false); // revert button text — disabled state is owned by the countdown itself now
+  showRateLimitBlockedState();
   return;
 }
 

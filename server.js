@@ -116,6 +116,34 @@ const apiLimiter = rateLimit({
   },
 });
 
+// ── Rate-limit status endpoint ──
+// Registered BEFORE app.use('/api', apiLimiter) below, so requests to this
+// path never pass through the limiter middleware — it can't be blocked,
+// and it doesn't consume a hit against the same 100/15min budget.
+app.get('/api/rate-limit-status', async (req, res) => {
+  try {
+    const info = await apiLimiter.getKey(req.ip);
+
+    if (!info) {
+      return res.json({ rateLimited: false, remaining: 100, retryAfterSeconds: 0 });
+    }
+
+    const limit = 100;
+    const remaining = Math.max(0, limit - info.totalHits);
+    const resetTime = info.resetTime instanceof Date
+      ? info.resetTime.getTime()
+      : Number(info.resetTime);
+    const retryAfterSeconds = Number.isFinite(resetTime)
+      ? Math.max(0, Math.ceil((resetTime - Date.now()) / 1000))
+      : 0;
+
+    return res.json({ rateLimited: remaining <= 0, remaining, retryAfterSeconds });
+  } catch (error) {
+    console.error('Rate-limit status error:', error.message);
+    return res.json({ rateLimited: false, remaining: null, retryAfterSeconds: 0 });
+  }
+});
+
 // Apply rate limiter to all /api routes
 app.use('/api', apiLimiter);
 
