@@ -902,6 +902,10 @@ async function handleResponse(response) {
   throw { type: 'solana-delay' };
 }
 
+function resetInputState() {
+  walletInput.classList.remove('input-valid', 'input-error');
+}
+
 // ════════════════════════════════════════
 // ── 9. SEARCH HISTORY ──
 // ════════════════════════════════════════
