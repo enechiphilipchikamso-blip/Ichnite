@@ -201,7 +201,16 @@ const RATE_LIMIT_LIMIT = 100;
 
 // Shared key helper so the limiter and the status endpoint read the same user bucket.
 function getRateLimitKey(req) {
-  return req.ip;
+  const key = req.ip;
+  console.log('🔎 Rate-limit key debug:', {
+    key,
+    reqIp: req.ip,
+    reqIps: req.ips,
+    remoteAddress: req.socket.remoteAddress,
+    xForwardedFor: req.get('x-forwarded-for') || null,
+    trustProxy: req.app.get('trust proxy'),
+  });
+  return key;
 }
 
 const apiLimiter = rateLimit({
@@ -277,6 +286,18 @@ app.get('/api/rate-limit-status', async (req, res) => {
       error: 'Unable to verify rate limit right now.',
     });
   }
+});
+
+app.get('/api/debug/ip', (req, res) => {
+  res.json({
+    reqIp: req.ip,
+    reqIps: req.ips,
+    remoteAddress: req.socket.remoteAddress,
+    xForwardedFor: req.get('x-forwarded-for') || null,
+    xRealIp: req.get('x-real-ip') || null,
+    trustProxy: req.app.get('trust proxy'),
+    rateLimitKey: getRateLimitKey(req),
+  });
 });
 
 // Apply rate limiter to all /api routes
