@@ -243,6 +243,7 @@ let rateLimitTickInterval = null;
 
 // Improvement 1: AbortController — cancel stale requests
 let currentAbortController = null;
+let liveUpdateAbortController = null;
 
 // ════════════════════════════════════════
 // ── 6. DOM ELEMENTS ──
@@ -473,58 +474,390 @@ function hideAllMessages() {
   hide(emptySearchMsg);
 }
 
-const RATE_LIMIT_UNLOCK_BUFFER_MS = 1200; // absorbs clock drift + 1s tick granularity + one round trip
+function normalizeRateLimitInfo(info = {}) {
+  const payload = typeof info === 'number'
+    ? { retryAfterSeconds: info }
+    : (info || {});
 
-function startRateLimitCountdown(seconds) {
-  clearInterval(rateLimitTickInterval);
-  rateLimitedUntil = Date.now() + seconds * 1000;
-  searchBtn.disabled = true;
-  hideAllMessages();
+  const fallbackSeconds = 15 * 60;
+  const resetAtValue = Number(payload.resetAt);
+  const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
+
+  if (Number.isFinite(resetAtValue)) {
+    return {
+      retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
+      resetAt: resetAtValue,
+    };
+  }
+
+  const retryAfterSeconds =
+    Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
+      ? retryAfterSecondsValue
+      : fallbackSeconds;
+
+  return {
+    retryAfterSeconds,
+    resetAt: Date.now() + retryAfterSeconds * 1000,
+  };
+}
+
+function clearRateLimitCountdownState({ hideMessage = true } = {}) {
+  if (rateLimitTickInterval) {
+    clearInterval(rateLimitTickInterval);
+    rateLimitTickInterval = null;
+  }
+
+  rateLimitedUntil = null;
+  lastRateLimitInfo = null;
+  lastSearchTime = 0;
+
+  searchBtn.disabled = false;
+  searchBtn.classList.remove('loading');
+  searchBtn.innerHTML = 'Trace';
+
+  if (hideMessage) {
+    hide(document.getElementById('rateLimitMsg'));
+  }
+}
+
+function startRateLimitCountdown(info = {}) {
+  const normalized = normalizeRateLimitInfo(info);
   const msgEl = document.getElementById('rateLimitMsg');
+  if (!msgEl) return;
+
+  if (rateLimitTickInterval) {
+    clearInterval(rateLimitTickInterval);
+    rateLimitTickInterval = null;
+  }
+
+  rateLimitedUntil = normalized.resetAt;
+  lastRateLimitInfo = normalized;
+  lastSearchTime = 0;
+
+  searchBtn.disabled = true;
+  searchBtn.classList.remove('loading');
+  searchBtn.innerHTML = 'Trace';
+  hideAllMessages();
   show(msgEl);
 
   const tick = () => {
-    const remaining = Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000));
+    const remainingMs = Math.max(0, rateLimitedUntil - Date.now());
+    const remaining = Math.ceil(remainingMs / 1000);
+
+    if (remaining <= 0) {
+      msgEl.textContent = `You've reached your limit. Please try again in 0:00`;
+      clearRateLimitCountdownState();
+      return;
+    }
+
     const m = Math.floor(remaining / 60);
     const s = String(remaining % 60).padStart(2, '0');
     msgEl.textContent = `You've reached your limit. Please try again in ${m}:${s}`;
-    // Display can hit 0:00 slightly before we actually unlock — the extra buffer
-    // means a click right at "0:00" can no longer land inside the server's window.
-    if (Date.now() >= rateLimitedUntil + RATE_LIMIT_UNLOCK_BUFFER_MS) {
-      clearInterval(rateLimitTickInterval);
-      hide(msgEl);
-      searchBtn.disabled = false;
-      rateLimitedUntil = null;
-    }
   };
+
   tick();
   rateLimitTickInterval = setInterval(tick, 1000);
 }
 
-if (res.status === 429) {
-  const body = await res.json().catch(() => ({}));
-  const retryAfter = Number(body.retryAfterSeconds);
-  const fallbackSeconds = 15 * 60;
-  const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
-    ? retryAfter
-    : fallbackSeconds;
+function enterRateLimitState(info = {}) {
+  const normalized = normalizeRateLimitInfo(info);
+  const currentUntil = Number(rateLimitedUntil);
 
-  startRateLimitCountdown(secondsToUse);
+  if (Number.isFinite(currentUntil) && normalized.resetAt <= currentUntil) {
+    normalized.resetAt = currentUntil;
+    normalized.retryAfterSeconds = Math.max(0, Math.ceil((currentUntil - Date.now()) / 1000));
+  }
 
+  startRateLimitCountdown(normalized);
+  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+}
+
+function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
+  hideAllMessages();
+
+  // Stop any in-flight / background work tied to the current search.
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+
+  if (liveUpdateInterval) {
+    clearInterval(liveUpdateInterval);
+    liveUpdateInterval = null;
+  }
+  
+    if (liveUpdateAbortController) {
+    liveUpdateAbortController.abort();
+    liveUpdateAbortController = null;
+  }
+
+  searchBtn.disabled = true;
+  searchBtn.classList.remove('loading');
+  searchBtn.innerHTML = 'Trace';
+
+  const marketSection = document.getElementById('solMarketSection');
+  const marketUnavailable = document.getElementById('solMarketUnavailable');
+  const walletAgeRow = document.getElementById('walletAgeRow');
+  const chartWrapper = barChart.closest('.chart-scroll-wrapper');
+
+  if (showResults) {
+    show(resultsSection);
+    show(walletDisplay);
+    show(clearBtn);
+    show(totalNetWorth);
+  } else {
+    hide(resultsSection);
+    hide(walletDisplay);
+    hide(clearBtn);
+    hide(totalNetWorth);
+  }
+
+  document.getElementById('netWorthError')?.remove();
+  document.getElementById('netWorthEmpty')?.remove();
+  document.getElementById('netWorthPending')?.remove();
+  document.getElementById('solBalanceError')?.remove();
+  document.getElementById('solCardFullError')?.remove();
+  document.getElementById('barChartError')?.remove();
+  document.getElementById('barChartEmpty')?.remove();
+
+  removePieHiddenIndicators();
+
+  solFetchFailed = true;
+  tokenFetchFailed = true;
+  barDataAvailable = false;
+  tokenDataAvailable = false;
+  netWorthRevealed = false;
+  tokenCardRevealed = false;
+  barCardRevealed = false;
+  solBalanceFailed = true;
   solPriceFailed = true;
+  solAgeFailed = true;
+  currentSolBalance = 0;
+  currentSolPrice = 0;
+  allTokens = [];
+  allTransactions = [];
+
+  netWorthValue.textContent = '';
+  hide(netWorthSkeleton);
+  hide(netWorthLabel);
+  hide(netWorthValue);
+
+  const netWorthMsg = document.createElement('p');
+  netWorthMsg.id = 'netWorthError';
+  netWorthMsg.className = 'empty-msg';
+  netWorthMsg.textContent = 'Temporarily unavailable';
+  totalNetWorth.appendChild(netWorthMsg);
+
+  hide(solSkeleton);
+  hide(solBalanceRow);
+  hide(document.getElementById('solEmptyMsg'));
+  document.getElementById('solBalanceError')?.remove();
+  solBalanceEl.textContent = '';
+  solBalanceUsd.textContent = '';
+
+  const solErrorMsg = document.createElement('p');
+  solErrorMsg.id = 'solBalanceError';
+  solErrorMsg.className = 'empty-msg';
+  solErrorMsg.textContent = 'Temporarily unavailable';
+  solBalanceRow.insertAdjacentElement('afterend', solErrorMsg);
+
+  if (marketUnavailable) {
+    marketUnavailable.textContent = 'Temporarily unavailable';
+  }
+  hide(document.getElementById('solMarketPriceRow'));
+  hide(document.getElementById('solMarketChangeRow'));
+  if (showResults) {
+    show(marketSection);
+    show(marketUnavailable);
+  } else {
+    hide(marketSection);
+    hide(marketUnavailable);
+  }
+
+  hide(solBalanceUsd);
+  solPriceEl.textContent = '';
+  solPriceChange.textContent = '';
   solPriceChange.className = 'sol-change';
 
-  const marketPlaceholder = document.getElementById('solMarketUnavailable');
-  const marketValuesRow1 = document.getElementById('solMarketPriceRow');
-  const marketValuesRow2 = document.getElementById('solMarketChangeRow');
+  walletAgeEl.textContent = 'Age unavailable';
+  if (showResults) {
+    show(walletAgeRow);
+  } else {
+    hide(walletAgeRow);
+  }
 
-  show(document.getElementById('solMarketSection'));
-  hide(marketValuesRow1);
-  hide(marketValuesRow2);
-  show(marketPlaceholder);
-  hide(solBalanceUsd);
+  hide(tokenSkeleton);
+  hide(tokenTotalSkeleton);
+  hide(tokenTotalValue);
+  hide(document.getElementById('tokenScrollFade'));
+  document.getElementById('pieLegendCustom')?.replaceChildren();
+  tokenTotalValue.textContent = '';
 
-  return true;
+  hide(pieSkeleton);
+  hide(pieSpinner);
+  hide(pieChart);
+
+  const tokenMsg = document.createElement('p');
+  tokenMsg.className = 'empty-msg';
+  tokenMsg.textContent = 'Temporarily unavailable';
+  tokenList.replaceChildren(tokenMsg);
+  if (showResults) {
+    show(tokenList);
+  } else {
+    hide(tokenList);
+  }
+
+  hide(nftSkeleton);
+  nftCountBadge.textContent = '';
+  hide(nftCountBadge);
+  nftGrid.replaceChildren();
+
+  const nftMsg = document.createElement('p');
+  nftMsg.className = 'empty-msg';
+  nftMsg.textContent = 'Temporarily unavailable';
+  nftList.replaceChildren(nftMsg);
+  if (showResults) {
+    show(nftList);
+    show(nftGrid);
+  } else {
+    hide(nftList);
+    hide(nftGrid);
+  }
+
+  hide(barSkeleton);
+  hide(barSpinner);
+  hide(barChart);
+  chartWrapper?.classList.remove('chart-reserved');
+  document.getElementById('barChartError')?.remove();
+  document.getElementById('barChartEmpty')?.remove();
+
+  const barMsg = document.createElement('p');
+  barMsg.id = 'barChartError';
+  barMsg.className = 'empty-msg';
+  barMsg.textContent = 'Temporarily unavailable';
+  chartWrapper?.appendChild(barMsg);
+  if (showResults) {
+    show(chartWrapper);
+  } else {
+    hide(chartWrapper);
+  }
+
+  hide(txSkeleton);
+  const txMsg = document.createElement('p');
+  txMsg.className = 'empty-msg';
+  txMsg.textContent = 'Temporarily unavailable';
+  last7txList.replaceChildren(txMsg);
+  if (showResults) {
+    show(last7txList);
+  } else {
+    hide(last7txList);
+  }
+}
+
+function normalizeRateLimitInfo(info = {}) {
+  const fallbackSeconds = 15 * 60;
+  const retryAfterSecondsValue = Number(info.retryAfterSeconds);
+  const resetAtValue = Number(info.resetAt);
+
+  if (Number.isFinite(resetAtValue)) {
+    return {
+      retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
+      resetAt: resetAtValue,
+    };
+  }
+
+  const retryAfterSeconds =
+    Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
+      ? retryAfterSecondsValue
+      : fallbackSeconds;
+
+  return {
+    retryAfterSeconds,
+    resetAt: Date.now() + retryAfterSeconds * 1000,
+  };
+}
+
+function enterRateLimitState(info = {}) {
+  const normalized = normalizeRateLimitInfo(info);
+  const currentResetAt = Number(rateLimitedUntil);
+  const existingResetAt = Number(lastRateLimitInfo?.resetAt);
+
+  lastRateLimitInfo = normalized;
+
+  const shouldRefreshCountdown =
+    !Number.isFinite(currentResetAt) ||
+    normalized.resetAt > currentResetAt + 1000 ||
+    (Number.isFinite(existingResetAt) && normalized.resetAt > existingResetAt + 1000);
+
+  if (shouldRefreshCountdown) {
+    startRateLimitCountdown(normalized.retryAfterSeconds);
+  } else {
+    rateLimitedUntil = normalized.resetAt;
+  }
+
+  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+}
+
+async function checkRateLimitGate() {
+  try {
+    const res = await fetch(`${API_BASE}/api/rate-limit-status`, {
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      console.warn('Rate-limit status endpoint returned non-OK response:', res.status);
+      return { rateLimited: false, checked: false };
+    }
+
+    const data = await res.json().catch(() => null);
+
+    if (!data || typeof data !== 'object') {
+      console.warn('Rate-limit status endpoint returned invalid JSON');
+      return { rateLimited: false, checked: false };
+    }
+
+    if (data.rateLimited) {
+      const retryAfter = Number(data.retryAfterSeconds);
+      const fallbackSeconds = 15 * 60;
+      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
+        ? retryAfter
+        : fallbackSeconds;
+
+      const resetAtValue = Number(data.resetAt);
+      const resetAt = Number.isFinite(resetAtValue)
+        ? resetAtValue
+        : Date.now() + secondsToUse * 1000;
+
+      lastRateLimitInfo = {
+        retryAfterSeconds: secondsToUse,
+        resetAt,
+      };
+
+      startRateLimitCountdown(secondsToUse);
+
+      return {
+        rateLimited: true,
+        checked: true,
+        retryAfterSeconds: secondsToUse,
+        resetAt,
+      };
+    }
+
+    const remainingValue = Number(data.remaining);
+    const retryAfterValue = Number(data.retryAfterSeconds);
+    const resetAtValue = Number(data.resetAt);
+
+    return {
+      rateLimited: false,
+      checked: true,
+      remaining: Number.isFinite(remainingValue) ? remainingValue : null,
+      retryAfterSeconds: Number.isFinite(retryAfterValue) ? retryAfterValue : 0,
+      resetAt: Number.isFinite(resetAtValue) ? resetAtValue : null,
+    };
+  } catch (error) {
+    console.warn('Rate-limit status check failed:', error);
+    return { rateLimited: false, checked: false, error };
+  }
 }
 
 // Improvement 10: Differentiate offline and server errors
@@ -558,11 +891,13 @@ function showError(type, customMessage) {
 // Improvement 10: Parse response status to show correct error
 async function handleResponse(response) {
   if (response.ok) return response.json();
+
   if (response.status === 429) {
     const body = await response.json().catch(() => ({}));
-    lastRateLimitInfo = { retryAfterSeconds: body.retryAfterSeconds || 0 };
+    enterRateLimitState(body);
     throw { type: 'ratelimit' };
   }
+
   if (response.status === 404) throw { type: 'notfound' };
   throw { type: 'solana-delay' };
 }
@@ -673,6 +1008,7 @@ function showAllSkeletons() {
   show(solSkeleton);
   hide(document.getElementById('solMarketSection'));
   hide(document.getElementById('walletAgeRow'));
+    document.getElementById('solMarketUnavailable').textContent = 'Price unavailable';
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
   document.getElementById('solCardFullError')?.remove();
@@ -756,8 +1092,25 @@ function resetAll() {
   hiddenTokenIds.clear();
   removePieHiddenIndicators();
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
-  if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
+      if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
+  if (liveUpdateAbortController) {
+    liveUpdateAbortController.abort();
+    liveUpdateAbortController = null;
+  }
+  clearRateLimitCountdownState();
+      
   document.title = 'Ichnite';
+    if (rateLimitTickInterval) {
+    clearInterval(rateLimitTickInterval);
+    rateLimitTickInterval = null;
+  }
+  rateLimitedUntil = null;
+  lastRateLimitInfo = null;
+  const rateLimitMsg = document.getElementById('rateLimitMsg');
+  hide(rateLimitMsg);
+  searchBtn.disabled = false;
+  searchBtn.classList.remove('loading');
+  searchBtn.innerHTML = 'Trace';
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
     btn.style.transform = '';
@@ -804,7 +1157,7 @@ walletInput.addEventListener('focus', () => {
 
 async function handleSearch() {
   if (rateLimitedUntil) {
-    return; // still locked out — the countdown message is already visible, nothing more to do
+    return; // countdown already owns the disabled state
   }
 
   if (!navigator.onLine) {
@@ -823,9 +1176,9 @@ async function handleSearch() {
 
   const now = Date.now();
   if (now - lastSearchTime < CONFIG.RATE_LIMIT_MS) {
-  showError('ratelimit');
-  return;
-}
+    showError('ratelimit');
+    return;
+  }
 
   if (!isValidSolanaAddress(rawAddress)) {
     hideAllMessages();
@@ -835,22 +1188,26 @@ async function handleSearch() {
     return;
   }
 
-  // Improvement 1: Abort previous request if still running
+  const existingResultsVisible = Boolean(currentWalletAddress);
+
+  // Abort any previous search before starting a new one.
   if (currentAbortController) {
     currentAbortController.abort();
   }
   currentAbortController = new AbortController();
-  
-  
-    setSearchLoading(true);
-    const isRateLimited = await checkRateLimitGate();
-    if (isRateLimited) {
-      setSearchLoading(false);
-      return;
-    }
 
-lastSearchTime = now;
-currentWalletAddress = rawAddress;
+  setSearchLoading(true);
+
+  const rateLimitCheck = await checkRateLimitGate();
+  if (rateLimitCheck.rateLimited) {
+    setSearchLoading(false);
+    currentAbortController = null;
+    showRateLimitBlockedState({ showResults: existingResultsVisible });
+    return;
+  }
+
+  lastSearchTime = now;
+  currentWalletAddress = rawAddress;
   walletInput.classList.add('input-valid');
   walletInput.classList.remove('input-error');
   hideAllMessages();
@@ -859,12 +1216,11 @@ currentWalletAddress = rawAddress;
   inputValidTimeout = setTimeout(() => {
     walletInput.classList.remove('input-valid');
   }, 5000);
-  setSearchLoading(true);
+
   showAllSkeletons();
   if (tokenSearch) tokenSearch.value = '';
-  
-  
-    /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
+
+  /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
   document.title = 'Ichnite - Wallet Results..';
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
@@ -874,7 +1230,15 @@ currentWalletAddress = rawAddress;
   hide(searchHistory);
   walletInput.blur();
 
-  if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
+  if (liveUpdateInterval) {
+    clearInterval(liveUpdateInterval);
+    liveUpdateInterval = null;
+  }
+  
+  if (liveUpdateAbortController) {
+    liveUpdateAbortController.abort();
+    liveUpdateAbortController = null;
+  }
 
   try {
     solFetchFailed = false;
@@ -889,29 +1253,39 @@ currentWalletAddress = rawAddress;
     solAgeFailed = false;
     failedFetchCount = 0;
     lastRateLimitInfo = null;
-    
-  await Promise.allSettled([
+
+            await Promise.allSettled([
       fetchSolBalance(currentWalletAddress),
       fetchTokens(currentWalletAddress),
       fetchNFTs(currentWalletAddress),
       fetchTransactions(currentWalletAddress),
     ]);
-    updateNetWorth();
-    if (lastRateLimitInfo) {
-      startRateLimitCountdown(lastRateLimitInfo.retryAfterSeconds);
-    } else if (failedFetchCount >= 4) {
-      showError('server');
-    }
-    // Already handled above using failedFetchCount.
-    
-    } finally {
-  setSearchLoading(false);
-  currentAbortController = null;
+
+    if (!rateLimitedUntil) {
+      updateNetWorth();
     }
 
-  liveUpdateInterval = setInterval(() => {
-    if (currentWalletAddress) fetchLivePrices(currentWalletAddress);
-  }, CONFIG.LIVE_UPDATE_INTERVAL);
+    if (!rateLimitedUntil && lastRateLimitInfo) {
+      startRateLimitCountdown(lastRateLimitInfo.retryAfterSeconds);
+    } else if (!rateLimitedUntil && failedFetchCount >= 4) {
+      showError('server');
+    }
+  } finally {
+    if (!rateLimitedUntil) {
+      setSearchLoading(false);
+    } else {
+      searchBtn.disabled = true;
+      searchBtn.classList.remove('loading');
+      searchBtn.innerHTML = 'Trace';
+    }
+    currentAbortController = null;
+  }
+
+  if (!rateLimitedUntil) {
+    liveUpdateInterval = setInterval(() => {
+      if (currentWalletAddress) fetchLivePrices();
+    }, CONFIG.LIVE_UPDATE_INTERVAL);
+  }
 }
 
 // ════════════════════════════════════════
@@ -930,7 +1304,18 @@ async function fetchSolBalance(address) {
     fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
   ]);
 
-  if (signal?.aborted) return; // superseded by a newer call — that call owns the UI now
+  if (signal?.aborted) return;
+
+  const priceResponse = priceResult.status === 'fulfilled' ? priceResult.value : null;
+  const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
+
+  if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
+    const rateLimitBody = priceResponse?.status === 429
+      ? await priceResponse.json().catch(() => ({}))
+      : await balanceResponse.json().catch(() => ({}));
+    enterRateLimitState(rateLimitBody);
+    return;
+  }
 
   const priceUnreachable = priceResult.status === 'rejected';
   const balanceUnreachable = balanceResult.status === 'rejected';
@@ -960,13 +1345,17 @@ async function fetchSolBalance(address) {
     return;
   }
 
-// Past this point, the backend IS reachable — per-section logic applies.
+  if (signal?.aborted || rateLimitedUntil) return;
+
+  // Past this point, the backend IS reachable — per-section logic applies.
   // solFetchFailed is computed at the END of this function, once both
   // sections have actually been evaluated — not forced false here.
 
   // ── Balance section ──
-  if (balanceResult.status === 'fulfilled' && balanceResult.value.ok) {
-    const balanceData = await balanceResult.value.json();
+  if (balanceResponse && balanceResponse.ok) {
+    const balanceData = await balanceResponse.json();
+    if (signal?.aborted || rateLimitedUntil) return;
+
     currentSolBalance = balanceData.balance || 0;
     solBalanceFailed = false;
 
@@ -994,14 +1383,18 @@ async function fetchSolBalance(address) {
     solBalanceRow.insertAdjacentElement('afterend', err);
   }
 
+  if (signal?.aborted || rateLimitedUntil) return;
+
   // ── Market section — one shared placeholder, not per-value ──
   show(document.getElementById('solMarketSection'));
   const marketPlaceholder = document.getElementById('solMarketUnavailable');
   const marketValuesRow1 = document.getElementById('solMarketPriceRow');
   const marketValuesRow2 = document.getElementById('solMarketChangeRow');
 
-  if (priceResult.status === 'fulfilled' && priceResult.value.ok) {
-    const priceData = await priceResult.value.json();
+  if (priceResponse && priceResponse.ok) {
+    const priceData = await priceResponse.json();
+    if (signal?.aborted || rateLimitedUntil) return;
+
     currentSolPrice = priceData.price || 0;
     const change = priceData.change24h || 0;
     solPriceFailed = false;
@@ -1043,6 +1436,9 @@ async function fetchTokens(address) {
     const signal = currentAbortController?.signal;
     const res = await fetch(`${API_BASE}/api/tokens?address=${address}`, { signal });
     const data = await handleResponse(res);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
     allTokens = data.tokens || [];
 
     if (allTokens.length === 0) {
@@ -1058,14 +1454,15 @@ async function fetchTokens(address) {
       revealCard(tokenList.closest('.card'));
       return;
     }
-    
-    
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
     // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
     renderTokenList(allTokens);
 
   } catch (error) {
-    if (error?.name === 'AbortError') return; // superseded by a newer search — don't touch any state
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
     tokenFetchFailed = true;
     tokenDataAvailable = false;
     failedFetchCount++;
@@ -1575,6 +1972,9 @@ async function fetchNFTs(address) {
     const signal = currentAbortController?.signal;
     const res = await fetch(`${API_BASE}/api/nfts?address=${address}`, { signal });
     const data = await handleResponse(res);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
     const nfts = data.nfts || [];
 
     if (nfts.length === 0) {
@@ -1588,6 +1988,8 @@ async function fetchNFTs(address) {
       return;
     }
 
+    if (signal?.aborted || rateLimitedUntil) return;
+
     nftCountBadge.textContent = nfts.length;
     show(nftCountBadge);
     renderNFTList(nfts);
@@ -1596,25 +1998,25 @@ async function fetchNFTs(address) {
     revealCard(nftList.closest('.card'));
 
   } catch (error) {
-  if (error?.name === 'AbortError') return;
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
-  failedFetchCount++;
+    failedFetchCount++;
 
-  console.error('NFT error:', error);
-  console.error('NFT error message:', error?.message);
-  console.error('NFT error stack:', error?.stack);
+    console.error('NFT error:', error);
+    console.error('NFT error message:', error?.message);
+    console.error('NFT error stack:', error?.stack);
 
-  nftGrid.replaceChildren();
-  nftList.replaceChildren();
+    nftGrid.replaceChildren();
+    nftList.replaceChildren();
 
-  hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
+    hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
 
-  const msg = document.createElement('p');
-  msg.className = 'empty-msg';
-  msg.textContent = 'Unable to load NFTs';
+    const msg = document.createElement('p');
+    msg.className = 'empty-msg';
+    msg.textContent = 'Unable to load NFTs';
 
-  nftList.appendChild(msg);
-}
+    nftList.appendChild(msg);
+  }
 }
 
 function renderNFTList(nfts) {
@@ -1748,13 +2150,19 @@ function renderNFTGrid(nfts) {
 async function fetchTransactions(address) {
   document.getElementById('barChartError')?.remove();
   document.getElementById('barChartEmpty')?.remove();
+
   try {
     const signal = currentAbortController?.signal;
     const res = await fetch(`${API_BASE}/api/transactions?address=${address}`, { signal });
     const data = await handleResponse(res);
-    allTransactions = data.transactions || [];
 
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    allTransactions = data.transactions || [];
     const age = calculateWalletAge(allTransactions);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
     if (age) {
       walletAgeEl.textContent = age;
       solAgeFailed = false;
@@ -1777,10 +2185,10 @@ async function fetchTransactions(address) {
     }
 
     renderRecentTransactions(allTransactions);
-    
 
   } catch (error) {
-    if (error?.name === 'AbortError') return;
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
+
     solAgeFailed = true;
     walletAgeEl.textContent = 'Age unavailable';
     show(document.getElementById('walletAgeRow'));
@@ -1800,7 +2208,6 @@ async function fetchTransactions(address) {
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load transactions';
     last7txList.replaceChildren(msg);
-    
   }
 }
 
@@ -2157,6 +2564,8 @@ yearOptions.forEach(option => {
 // ════════════════════════════════════════
 
 function updateNetWorth() {
+  if (rateLimitedUntil) return;
+
   document.getElementById('netWorthError')?.remove();
   document.getElementById('netWorthEmpty')?.remove();
   document.getElementById('netWorthPending')?.remove();
@@ -2230,10 +2639,34 @@ function updateNetWorth() {
 // ════════════════════════════════════════
 
 async function fetchLivePrices() {
+  if (!currentWalletAddress || rateLimitedUntil) return;
+
+  if (liveUpdateAbortController) {
+    liveUpdateAbortController.abort();
+  }
+
+  liveUpdateAbortController = new AbortController();
+  const { signal } = liveUpdateAbortController;
+  const walletSnapshot = currentWalletAddress;
+
   try {
-    const res = await fetch(`${API_BASE}/api/sol-price`);
+    const res = await fetch(`${API_BASE}/api/sol-price`, {
+      signal,
+      cache: 'no-store',
+    });
+
+    if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
+
+    if (res.status === 429) {
+      const body = await res.json().catch(() => ({}));
+      enterRateLimitState(body);
+      return;
+    }
+
     if (res.ok) {
       const priceData = await res.json();
+      if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
+
       currentSolPrice = priceData.price || 0;
       const change = priceData.change24h || 0;
       solPriceFailed = false;
@@ -2245,32 +2678,46 @@ async function fetchLivePrices() {
       hide(document.getElementById('solMarketUnavailable'));
       show(document.getElementById('solMarketPriceRow'));
       show(document.getElementById('solMarketChangeRow'));
+
       if (currentSolBalance > 0) {
-      solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
-      show(solBalanceUsd);
+        solBalanceUsd.textContent = formatUSD(currentSolBalance * currentSolPrice);
+        show(solBalanceUsd);
+      } else {
+        hide(solBalanceUsd);
+      }
     } else {
-      hide(solBalanceUsd);
-    }
-    
-   }  else {
       solPriceFailed = true;
       hide(document.getElementById('solMarketPriceRow'));
       hide(document.getElementById('solMarketChangeRow'));
       show(document.getElementById('solMarketUnavailable'));
     }
 
+    if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
+
     // Live Jupiter-only price refresh — Raydium deliberately excluded here per its
-// own docs ("not suitable for real-time tracking"); Raydium only runs once,
-// at initial search time, via the full /api/tokens route.
+    // own docs ("not suitable for real-time tracking"); Raydium only runs once,
+    // at initial search time, via the full /api/tokens route.
     if (allTokens.length > 0) {
       const mintList = allTokens.map(t => t.mint).filter(Boolean);
       const priceRes = await fetch(`${API_BASE}/api/token-prices-live`, {
         method: 'POST',
+        signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mints: mintList }),
       });
+
+      if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
+
+      if (priceRes.status === 429) {
+        const body = await priceRes.json().catch(() => ({}));
+        enterRateLimitState(body);
+        return;
+      }
+
       if (priceRes.ok) {
         const { prices, unpriced } = await priceRes.json();
+        if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
+
         let updated = false;
         allTokens.forEach(t => {
           if (prices[t.mint] !== undefined) {
@@ -2281,27 +2728,38 @@ async function fetchLivePrices() {
             t.priceUnavailable = true;
           }
         });
-        if (updated) {
-    renderTokenList(allTokens, { skipSpinner: true });
-            }
+
+        if (updated && !rateLimitedUntil && walletSnapshot === currentWalletAddress) {
+          renderTokenList(allTokens, { skipSpinner: true });
         }
+      }
     }
 
-    updateNetWorth();
+    if (!rateLimitedUntil && walletSnapshot === currentWalletAddress) {
+      updateNetWorth();
+    }
   } catch (error) {
-  if (error.name === 'AbortError') return;
+    if (error?.name === 'AbortError' || rateLimitedUntil) return;
 
-  liveUpdateFailures++;
+    liveUpdateFailures++;
 
-  if (liveUpdateFailures >= 5) {
-    clearInterval(liveUpdateInterval);
-    liveUpdateInterval = null;
-    console.warn('Live updates stopped after repeated failures.');
-    return;
+    if (liveUpdateFailures >= 5) {
+      clearInterval(liveUpdateInterval);
+      liveUpdateInterval = null;
+      if (liveUpdateAbortController) {
+        liveUpdateAbortController.abort();
+        liveUpdateAbortController = null;
+      }
+      console.warn('Live updates stopped after repeated failures.');
+      return;
+    }
+
+    console.warn('Live update failed:', error);
+  } finally {
+    if (liveUpdateAbortController?.signal === signal) {
+      liveUpdateAbortController = null;
+    }
   }
-
-  console.warn('Live update failed:', error);
-}
 }
 
 // ════════════════════════════════════════
@@ -2408,7 +2866,9 @@ window.addEventListener('offline', () => {
 
 window.addEventListener('online', () => {
   hide(networkErrorMsg);
-  if (currentWalletAddress) fetchLivePrices();
+  if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval) {
+    fetchLivePrices();
+  }
 });
 
 // ════════════════════════════════════════

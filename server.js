@@ -11,6 +11,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import fetch from 'node-fetch';
+import net from 'node:net';
 
 // ── Validate required environment variables on startup ──
 const requiredEnvVars = ['HELIUS_API_KEY'];
@@ -30,90 +31,273 @@ requiredEnvVars.forEach((key) => {
 
 // ── Express App ──
 const app = express();
-// Trust first proxy hop (Vercel/StackBlitz) so express-rate-limit
-// can correctly resolve real client IPs from X-Forwarded-For
-app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// ── Allowed Origins ──
-// In development — allow localhost
-// In production — allow only your Vercel domain
-const allowedOrigins =
-  NODE_ENV === 'development'
-    ? ['http://localhost:3000', 'http://127.0.0.1:3000', new RegExp(`^https://${process.env.CODESPACE_NAME}-\\d+\\.app\\.github\\.dev$`)]
-    : ['https://Ichnite.vercel.app'];
+function isValidTrustProxyToken(token) {
+  const value = token.trim();
+  if (!value) return false;
+
+  const lower = value.toLowerCase();
+  if (['loopback', 'linklocal', 'uniquelocal'].includes(lower)) return true;
+
+  if (net.isIP(value) !== 0) return true;
+
+  const cidrMatch = value.match(/^(.+)\/(\d{1,3})$/);
+  if (!cidrMatch) return false;
+
+  const [, ipPart, prefixPart] = cidrMatch;
+  const ipVersion = net.isIP(ipPart.trim());
+  if (ipVersion === 0) return false;
+
+  const prefix = Number(prefixPart);
+  if (!Number.isInteger(prefix)) return false;
+
+  return ipVersion === 4 ? prefix >= 0 && prefix <= 32 : prefix >= 0 && prefix <= 128;
+}
+
+function parseTrustProxySetting(rawValue) {
+  if (rawValue == null) return false;
+
+  const value = String(rawValue).trim();
+  if (value === '') return false;
+
+  const lower = value.toLowerCase();
+  if (['false', 'off', 'no', 'none', 'true'].includes(lower)) return false;
+
+  if (/^\d+$/.test(value)) return Number(value);
+
+  const tokens = value.split(',').map((part) => part.trim()).filter(Boolean);
+  if (tokens.length === 0) return false;
+
+  if (!tokens.every(isValidTrustProxyToken)) {
+    console.warn(`⚠️ Ignoring invalid TRUST_PROXY value: ${value}`);
+    return false;
+  }
+
+  return tokens.length === 1 ? tokens[0] : tokens;
+}
+
+function parseAllowedOrigins(rawValue) {
+  if (rawValue == null) return [];
+
+  const values = String(rawValue)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const origins = [];
+
+  for (const origin of values) {
+    try {
+      const parsed = new URL(origin);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        console.warn(`⚠️ Ignoring unsupported ALLOWED_ORIGINS value: ${origin}`);
+        continue;
+      }
+      origins.push(parsed.origin);
+    } catch {
+      console.warn(`⚠️ Ignoring invalid ALLOWED_ORIGINS value: ${origin}`);
+    }
+  }
+
+  return origins;
+}
+
+function isDevelopmentLocalOrigin(origin) {
+  return (
+    /^http:\/\/localhost(?::\d+)?$/.test(origin) ||
+    /^http:\/\/127\.0\.0\.1(?::\d+)?$/.test(origin) ||
+    /^http:\/\/\[::1\](?::\d+)?$/.test(origin)
+  );
+}
+
+function describeTrustProxySetting(setting) {
+  if (setting === false) return 'false (no proxy trusted)';
+  if (typeof setting === 'number') return `hop count ${setting}`;
+  if (Array.isArray(setting)) return `trusted sources [${setting.join(', ')}]`;
+  return `trusted source ${setting}`;
+}
+
+const trustProxySetting = parseTrustProxySetting(process.env.TRUST_PROXY);
+const configuredOrigins = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+const developmentOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+if (
+  process.env.TRUST_PROXY &&
+  String(process.env.TRUST_PROXY).trim().toLowerCase() !== 'false' &&
+  trustProxySetting === false
+) {
+  console.warn('⚠️ TRUST_PROXY is missing, empty, or invalid. Falling back to false.');
+}
+
+if (NODE_ENV !== 'development' && configuredOrigins.length === 0) {
+  console.warn('⚠️ ALLOWED_ORIGINS is not set. Browser requests from a different origin will be blocked until you configure it.');
+}
+
+const allowedOrigins = new Set(configuredOrigins);
+if (NODE_ENV === 'development') {
+  developmentOrigins.forEach((origin) => allowedOrigins.add(origin));
+}
+
+app.set('trust proxy', trustProxySetting);
 
 // ── Security Middleware — applied before all routes ──
 
 // 1. Helmet — sets secure HTTP headers
 app.use(helmet());
 
-// 2. CORS — only allow requests from Ichnite frontend
-const corsOptions = {  
-  origin: function (origin, callback) {  
-    // Allow requests with no Origin (Postman, curl, server-to-server)  
-    if (!origin) {  
-      console.log('✅ Allowing request with no Origin header');  
-      return callback(null, true);  
-    }  
-      console.log('Origin:', origin);
-  
-    // Allow this Codespace frontend  
-    const codespaceName = process.env.CODESPACE_NAME;  
-    if (codespaceName) {  
-      const codespaceRegex = new RegExp(  
-        `^https://${codespaceName}-\\d+\\.app\\.github\\.dev$`  
-      );  
-  
-      if (codespaceRegex.test(origin)) {  
-        console.log(`✅ Allowed Codespaces origin: ${origin}`);  
-        return callback(null, true);  
-      }  
-    }  
-        
-      //AllowedOrigins   
-     if (allowedOrigins.includes(origin)) {  
-  return callback(null, true);  
-    }  
-  
-    // Allow localhost during development  
-    if (origin.startsWith('http://localhost')) {  
-      console.log(`✅ Allowed localhost origin: ${origin}`);  
-      return callback(null, true);  
-    }  
-  
-    console.error(`❌ Blocked CORS request from origin: ${origin}`);  
-    return callback(new Error('Not allowed by CORS'));  
-  },  
-  methods: ['GET', 'POST'],  
-  allowedHeaders: ['Content-Type'],  
-};  
-  
+const corsOptions = {
+  origin(origin, callback) {
+    // Allow requests with no Origin (Postman, curl, server-to-server)
+    if (!origin) {
+      console.log('✅ Allowing request with no Origin header');
+      return callback(null, true);
+    }
+
+    console.log('Origin:', origin);
+
+    // Allow explicitly configured frontend origins.
+    // This is the primary production/deployment-independent mechanism.
+    if (allowedOrigins.has(origin)) {
+      console.log(`✅ Allowed configured origin: ${origin}`);
+      return callback(null, true);
+    }
+
+    // Allow local development origins.
+    if (NODE_ENV === 'development' && isDevelopmentLocalOrigin(origin)) {
+      console.log(`✅ Allowed local development origin: ${origin}`);
+      return callback(null, true);
+    }
+
+    // Allow GitHub Codespaces forwarded URLs during development only.
+    // This does not affect production deployments because it requires
+    // NODE_ENV === 'development' and a matching CODESPACE_NAME.
+    if (NODE_ENV === 'development' && process.env.CODESPACE_NAME) {
+      const codespaceName = process.env.CODESPACE_NAME.trim();
+
+      const codespaceOriginRegex = new RegExp(
+        `^https://${codespaceName}-\\d+\\.app\\.github\\.dev$`
+      );
+
+      if (codespaceOriginRegex.test(origin)) {
+        console.log(`✅ Allowed GitHub Codespaces origin: ${origin}`);
+        return callback(null, true);
+      }
+    }
+
+    console.error(`❌ Blocked CORS request from origin: ${origin}`);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type'],
+};
+
 app.use(cors(corsOptions));  
 
 // 3. Rate limiting — prevent API abuse
-// 100 requests per 15 minutes per IP
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const RATE_LIMIT_LIMIT = 100;
+
+// Shared key helper so the limiter and the status endpoint read the same user bucket.
+function getRateLimitKey(req) {
+  const key = req.ip;
+  console.log('🔎 Rate-limit key debug:', {
+    key,
+    reqIp: req.ip,
+    reqIps: req.ips,
+    remoteAddress: req.socket.remoteAddress,
+    xForwardedFor: req.get('x-forwarded-for') || null,
+    trustProxy: req.app.get('trust proxy'),
+  });
+  return key;
+}
+
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
-  message: (req, res) => {
+  message: (req) => {
     // req.rateLimit.resetTime is a Date — the documented, reliable way to
-    // access reset info, unlike reading a header back mid-response
+    // access reset info, rather than guessing from headers.
     const resetTime = req.rateLimit?.resetTime;
-    const secondsLeft = resetTime
-    ? Math.max(0, Math.ceil((resetTime.getTime() - Date.now()) / 1000))
-    : 0;
+    const resetAt = resetTime instanceof Date
+      ? resetTime.getTime()
+      : Number(resetTime);
+
+    const secondsLeft = Number.isFinite(resetAt)
+      ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
+      : 0;
+
     const minutes = Math.floor(secondsLeft / 60);
     const seconds = secondsLeft % 60;
+
     return {
       error: 'Too many requests. Please try again later.',
       timeRemaining: `${minutes}m ${seconds}s`,
       retryAfterSeconds: secondsLeft,
+      resetAt: Number.isFinite(resetAt) ? resetAt : null,
     };
   },
+});
+
+// ── Rate-limit status endpoint ──
+// Registered BEFORE app.use('/api', apiLimiter) below, so requests to this
+// path never pass through the limiter middleware — it can't be blocked,
+// and it doesn't consume a hit against the same budget.
+app.get('/api/rate-limit-status', async (req, res) => {
+  try {
+    const rateLimitKey = getRateLimitKey(req);
+    const info = await apiLimiter.getKey(rateLimitKey);
+
+    if (!info) {
+      return res.json({
+        rateLimited: false,
+        remaining: RATE_LIMIT_LIMIT,
+        retryAfterSeconds: 0,
+        resetAt: null,
+      });
+    }
+
+    const totalHits = Number(info.totalHits ?? 0);
+    const remaining = Math.max(0, RATE_LIMIT_LIMIT - totalHits);
+    const resetAt = info.resetTime instanceof Date
+      ? info.resetTime.getTime()
+      : Number(info.resetTime);
+
+    const retryAfterSeconds = Number.isFinite(resetAt)
+      ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
+      : 0;
+
+    return res.json({
+      rateLimited: remaining <= 0,
+      remaining,
+      retryAfterSeconds,
+      resetAt: Number.isFinite(resetAt) ? resetAt : null,
+    });
+  } catch (error) {
+    console.error('Rate-limit status error:', error.message);
+    return res.json({
+      rateLimited: false,
+      remaining: null,
+      retryAfterSeconds: 0,
+      resetAt: null,
+      error: 'Unable to verify rate limit right now.',
+    });
+  }
+});
+
+app.get('/api/debug/ip', (req, res) => {
+  res.json({
+    reqIp: req.ip,
+    reqIps: req.ips,
+    remoteAddress: req.socket.remoteAddress,
+    xForwardedFor: req.get('x-forwarded-for') || null,
+    xRealIp: req.get('x-real-ip') || null,
+    trustProxy: req.app.get('trust proxy'),
+    rateLimitKey: getRateLimitKey(req),
+  });
 });
 
 // Apply rate limiter to all /api routes
@@ -728,4 +912,7 @@ app.listen(PORT, () => {
   console.log(`🔑 Raydium V3: Unauthenticated (fallback token pricing)`);
   console.log(`🔑 CoinGecko: ${COINGECKO_API_KEY ? 'Demo tier' : 'Keyless'} (primary SOL price)`);
   console.log(`🔑 CoinMarketCap: ${CMC_API_KEY ? 'Connected' : '⚠️  Not configured'} (SOL price fallback)`);
+  const allowedOriginList = [...allowedOrigins];
+  console.log(`🔒 Trust proxy: ${describeTrustProxySetting(trustProxySetting)}`);
+  console.log(`🌐 Allowed CORS origins: ${allowedOriginList.length ? allowedOriginList.join(', ') : '(none configured)'}`);
 });
