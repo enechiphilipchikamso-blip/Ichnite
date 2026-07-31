@@ -501,110 +501,30 @@ function startRateLimitCountdown(seconds) {
   rateLimitTickInterval = setInterval(tick, 1000);
 }
 
-function showRateLimitBlockedState() {
-  show(resultsSection);
+if (res.status === 429) {
+  const body = await res.json().catch(() => ({}));
+  const retryAfter = Number(body.retryAfterSeconds);
+  const fallbackSeconds = 15 * 60;
+  const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
+    ? retryAfter
+    : fallbackSeconds;
 
-  // Total Net Worth
-  hide(netWorthSkeleton);
-  hide(netWorthValue);
-  document.getElementById('netWorthError')?.remove();
-  document.getElementById('netWorthEmpty')?.remove();
-  document.getElementById('netWorthPending')?.remove();
-  const netWorthMsg = document.createElement('p');
-  netWorthMsg.id = 'netWorthError';
-  netWorthMsg.className = 'empty-msg';
-  netWorthMsg.textContent = 'Unable to load total net worth';
-  totalNetWorth.appendChild(netWorthMsg);
-  show(totalNetWorth);
-  solBalanceFailed = true;
+  startRateLimitCountdown(secondsToUse);
+
   solPriceFailed = true;
-  solAgeFailed = true;
-  tokenFetchFailed = true;
-
-  // SOL Balance card
-  hide(solSkeleton);
-  hide(solBalanceRow);
-  hide(document.getElementById('solEmptyMsg'));
-  document.getElementById('solBalanceError')?.remove();
-  const solErrorMsg = document.createElement('p');
-  solErrorMsg.id = 'solBalanceError';
-  solErrorMsg.className = 'empty-msg';
-  solErrorMsg.textContent = 'Unable to load SOL balance';
-  solBalanceRow.insertAdjacentElement('afterend', solErrorMsg);
-
-  show(document.getElementById('solMarketSection'));
-  hide(document.getElementById('solMarketPriceRow'));
-  hide(document.getElementById('solMarketChangeRow'));
-  show(document.getElementById('solMarketUnavailable'));
-  hide(solBalanceUsd);
   solPriceChange.className = 'sol-change';
 
-  walletAgeEl.textContent = 'Age unavailable';
-  show(document.getElementById('walletAgeRow'));
+  const marketPlaceholder = document.getElementById('solMarketUnavailable');
+  const marketValuesRow1 = document.getElementById('solMarketPriceRow');
+  const marketValuesRow2 = document.getElementById('solMarketChangeRow');
 
-  // Token Holdings
-  hide(tokenSkeleton);
-  hide(tokenTotalSkeleton);
-  hide(tokenTotalValue);
-  hide(pieSkeleton);
-  hide(pieSpinner);
-  hide(pieChart);
-  document.getElementById('pieLegendCustom')?.replaceChildren();
-  const tokenMsg = document.createElement('p');
-  tokenMsg.className = 'empty-msg';
-  tokenMsg.textContent = 'Unable to load token holdings';
-  tokenList.replaceChildren(tokenMsg);
-  show(tokenList);
+  show(document.getElementById('solMarketSection'));
+  hide(marketValuesRow1);
+  hide(marketValuesRow2);
+  show(marketPlaceholder);
+  hide(solBalanceUsd);
 
-  // NFTs
-  hide(nftSkeleton);
-  nftGrid.replaceChildren();
-  show(nftGrid);
-  const nftMsg = document.createElement('p');
-  nftMsg.className = 'empty-msg';
-  nftMsg.textContent = 'Unable to load NFTs';
-  nftList.replaceChildren(nftMsg);
-  show(nftList);
-
-  // Wallet Activity + Recent Transactions
-  hide(barSkeleton);
-  hide(barSpinner);
-  hide(barChart);
-  barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
-  document.getElementById('barChartError')?.remove();
-  document.getElementById('barChartEmpty')?.remove();
-  const barMsg = document.createElement('p');
-  barMsg.id = 'barChartError';
-  barMsg.className = 'empty-msg';
-  barMsg.textContent = 'Unable to load wallet activity chart';
-  barChart.closest('.chart-scroll-wrapper')?.appendChild(barMsg);
-  barDataAvailable = false;
-
-  hide(txSkeleton);
-  const txMsg = document.createElement('p');
-  txMsg.className = 'empty-msg';
-  txMsg.textContent = 'Unable to load transactions';
-  last7txList.replaceChildren(txMsg);
-  show(last7txList);
-}
-
-async function checkRateLimitGate() {
-  try {
-    const res = await fetch(`${API_BASE}/api/sol-price`);
-    if (res.status === 429) {
-      const body = await res.json().catch(() => ({}));
-      const retryAfter = Number(body.retryAfterSeconds);
-      const fallbackSeconds = 15 * 60;
-      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
-        ? retryAfter
-        : fallbackSeconds;
-      startRateLimitCountdown(secondsToUse);
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
+  return true;
 }
 
 // Improvement 10: Differentiate offline and server errors
@@ -921,15 +841,13 @@ async function handleSearch() {
   }
   currentAbortController = new AbortController();
   
-  setSearchLoading(true);
-
-  const isRateLimited = await checkRateLimitGate();
   
-  if (isRateLimited) {
-    setSearchLoading(false);
-    showRateLimitBlockedState();
-    return;
-  }
+    setSearchLoading(true);
+    const isRateLimited = await checkRateLimitGate();
+    if (isRateLimited) {
+      setSearchLoading(false);
+      return;
+    }
 
 lastSearchTime = now;
 currentWalletAddress = rawAddress;
