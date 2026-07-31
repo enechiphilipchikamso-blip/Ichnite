@@ -22,6 +22,7 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
+  TRACE_REQUEST_COST: 5, // sol-price + sol-balance + tokens + nfts + transactions
 });
 
 // ════════════════════════════════════════
@@ -190,6 +191,33 @@ const TOKEN_COLORS = Object.freeze({
   INTCx: '#0071C5',
   AMDx: '#ED1C24',
   PYPLx: '#003087',
+  MSFTx: '#00A4EF',
+  AVGOx: '#CC092F',
+  XAUt0: '#C9A227',
+  JPMx: '#117ACA',
+  CVXx: '#0056A2',
+  GSx: '#7399C6',
+  PLTRx: '#000000',
+  MCDx: '#FFC72C',
+  PGx: '#003DA5',
+  JNJx: '#D50032',
+  XOMx: '#DA291C',
+  HONx: '#ED1C24',
+  BACx: '#012169',
+  MAx: '#EB001B',
+  PFEx: '#0093D0',
+  CRWDx: '#FC0000',
+  ACNx: '#A100FF',
+  DELLx: '#007DB8',
+  AZNx: '#830051',
+  GMEx: '#FD0000',
+  RBLXx: '#E2231A',
+  TMOx: '#E4002B',
+  ABTx: '#0057B8',
+  MDTx: '#004B87',
+  SPCXx: '#000000',
+  HOODx: '#00C805',
+  SNDKx: '#E10600',
   DEFAULT: '#7c5cfc',
 });
 
@@ -474,6 +502,55 @@ function hideAllMessages() {
   hide(emptySearchMsg);
 }
 
+const RATE_LIMIT_STATE_STORAGE_KEY = 'IchniteRateLimitState';
+
+function readPersistedRateLimitState() {
+  try {
+    const raw = sessionStorage.getItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const resetAt = Number(parsed?.resetAt);
+
+    if (!Number.isFinite(resetAt)) {
+      sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+      return null;
+    }
+
+    if (resetAt <= Date.now()) {
+      sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      resetAt,
+      retryAfterSeconds: Math.max(0, Math.ceil((resetAt - Date.now()) / 1000)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistRateLimitState(resetAt) {
+  try {
+    if (!Number.isFinite(resetAt)) return;
+    sessionStorage.setItem(
+      RATE_LIMIT_STATE_STORAGE_KEY,
+      JSON.stringify({ resetAt })
+    );
+  } catch {
+    // silent fail
+  }
+}
+
+function clearPersistedRateLimitState() {
+  try {
+    sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+  } catch {
+    // silent fail
+  }
+}
+
 function normalizeRateLimitInfo(info = {}) {
   const payload = typeof info === 'number'
     ? { retryAfterSeconds: info }
@@ -483,11 +560,16 @@ function normalizeRateLimitInfo(info = {}) {
   const resetAtValue = Number(payload.resetAt);
   const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
 
-  if (Number.isFinite(resetAtValue)) {
+  if (Number.isFinite(resetAtValue) && resetAtValue > Date.now()) {
     return {
       retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
       resetAt: resetAtValue,
     };
+  }
+
+  const persisted = readPersistedRateLimitState();
+  if (persisted) {
+    return persisted;
   }
 
   const retryAfterSeconds =
@@ -501,7 +583,11 @@ function normalizeRateLimitInfo(info = {}) {
   };
 }
 
-function clearRateLimitCountdownState({ hideMessage = true } = {}) {
+function isTraceBudgetInsufficient(remaining) {
+  return Number.isFinite(remaining) && remaining >= 0 && remaining < CONFIG.TRACE_REQUEST_COST;
+}
+
+function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false } = {}) {
   if (rateLimitTickInterval) {
     clearInterval(rateLimitTickInterval);
     rateLimitTickInterval = null;
@@ -510,6 +596,10 @@ function clearRateLimitCountdownState({ hideMessage = true } = {}) {
   rateLimitedUntil = null;
   lastRateLimitInfo = null;
   lastSearchTime = 0;
+
+  if (clearStorage) {
+    clearPersistedRateLimitState();
+  }
 
   searchBtn.disabled = false;
   searchBtn.classList.remove('loading');
@@ -534,6 +624,8 @@ function startRateLimitCountdown(info = {}) {
   lastRateLimitInfo = normalized;
   lastSearchTime = 0;
 
+  persistRateLimitState(rateLimitedUntil);
+
   searchBtn.disabled = true;
   searchBtn.classList.remove('loading');
   searchBtn.innerHTML = 'Trace';
@@ -546,7 +638,7 @@ function startRateLimitCountdown(info = {}) {
 
     if (remaining <= 0) {
       msgEl.textContent = `You've reached your limit. Please try again in 0:00`;
-      clearRateLimitCountdownState();
+      clearRateLimitCountdownState({ clearStorage: true });
       return;
     }
 
@@ -799,6 +891,8 @@ function enterRateLimitState(info = {}) {
 }
 
 async function checkRateLimitGate() {
+  const persisted = readPersistedRateLimitState();
+
   try {
     const res = await fetch(`${API_BASE}/api/rate-limit-status`, {
       cache: 'no-store',
@@ -806,6 +900,10 @@ async function checkRateLimitGate() {
 
     if (!res.ok) {
       console.warn('Rate-limit status endpoint returned non-OK response:', res.status);
+      if (persisted) {
+        startRateLimitCountdown(persisted);
+        return { rateLimited: true, checked: false, ...persisted };
+      }
       return { rateLimited: false, checked: false };
     }
 
@@ -813,35 +911,25 @@ async function checkRateLimitGate() {
 
     if (!data || typeof data !== 'object') {
       console.warn('Rate-limit status endpoint returned invalid JSON');
+      if (persisted) {
+        startRateLimitCountdown(persisted);
+        return { rateLimited: true, checked: false, ...persisted };
+      }
       return { rateLimited: false, checked: false };
     }
 
     if (data.rateLimited) {
-      const retryAfter = Number(data.retryAfterSeconds);
-      const fallbackSeconds = 15 * 60;
-      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
-        ? retryAfter
-        : fallbackSeconds;
-
-      const resetAtValue = Number(data.resetAt);
-      const resetAt = Number.isFinite(resetAtValue)
-        ? resetAtValue
-        : Date.now() + secondsToUse * 1000;
-
-      lastRateLimitInfo = {
-        retryAfterSeconds: secondsToUse,
-        resetAt,
-      };
-
-      startRateLimitCountdown(secondsToUse);
-
+      const normalized = normalizeRateLimitInfo(data);
+      lastRateLimitInfo = normalized;
+      startRateLimitCountdown(normalized);
       return {
         rateLimited: true,
         checked: true,
-        retryAfterSeconds: secondsToUse,
-        resetAt,
+        ...normalized,
       };
     }
+
+    clearPersistedRateLimitState();
 
     const remainingValue = Number(data.remaining);
     const retryAfterValue = Number(data.retryAfterSeconds);
@@ -856,6 +944,10 @@ async function checkRateLimitGate() {
     };
   } catch (error) {
     console.warn('Rate-limit status check failed:', error);
+    if (persisted) {
+      startRateLimitCountdown(persisted);
+      return { rateLimited: true, checked: false, ...persisted, error };
+    }
     return { rateLimited: false, checked: false, error };
   }
 }
@@ -1093,24 +1185,13 @@ function resetAll() {
   removePieHiddenIndicators();
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
       if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
-  if (liveUpdateAbortController) {
+    if (liveUpdateAbortController) {
     liveUpdateAbortController.abort();
     liveUpdateAbortController = null;
   }
-  clearRateLimitCountdownState();
-      
+
+  clearRateLimitCountdownState({ hideMessage: true, clearStorage: false });
   document.title = 'Ichnite';
-    if (rateLimitTickInterval) {
-    clearInterval(rateLimitTickInterval);
-    rateLimitTickInterval = null;
-  }
-  rateLimitedUntil = null;
-  lastRateLimitInfo = null;
-  const rateLimitMsg = document.getElementById('rateLimitMsg');
-  hide(rateLimitMsg);
-  searchBtn.disabled = false;
-  searchBtn.classList.remove('loading');
-  searchBtn.innerHTML = 'Trace';
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
     btn.style.transform = '';
@@ -1198,11 +1279,16 @@ async function handleSearch() {
 
   setSearchLoading(true);
 
-  const rateLimitCheck = await checkRateLimitGate();
-  if (rateLimitCheck.rateLimited) {
+    const rateLimitCheck = await checkRateLimitGate();
+  const remainingBudget = Number(rateLimitCheck.remaining);
+  const insufficientTraceBudget =
+    rateLimitCheck.checked &&
+    isTraceBudgetInsufficient(remainingBudget);
+
+  if (rateLimitCheck.rateLimited || insufficientTraceBudget) {
     setSearchLoading(false);
     currentAbortController = null;
-    showRateLimitBlockedState({ showResults: existingResultsVisible });
+    enterRateLimitState(rateLimitCheck);
     return;
   }
 
@@ -2639,13 +2725,19 @@ function updateNetWorth() {
 // ════════════════════════════════════════
 
 async function fetchLivePrices() {
-  if (!currentWalletAddress || rateLimitedUntil) return;
+  if (!currentWalletAddress || rateLimitedUntil || currentAbortController) return;
 
   if (liveUpdateAbortController) {
     liveUpdateAbortController.abort();
   }
 
   liveUpdateAbortController = new AbortController();
+  if (currentAbortController) {
+    liveUpdateAbortController.abort();
+    liveUpdateAbortController = null;
+    return;
+  }
+
   const { signal } = liveUpdateAbortController;
   const walletSnapshot = currentWalletAddress;
 
@@ -2846,7 +2938,7 @@ if (backToTopBtn) {
 // ════════════════════════════════════════
 
 accordionBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
+    btn.addEventListener('click', () => {
     const content = btn.nextElementSibling;
     const arrow = btn.querySelector('.arrow');
     const isOpen = !content.classList.contains('hidden');
@@ -2866,7 +2958,7 @@ window.addEventListener('offline', () => {
 
 window.addEventListener('online', () => {
   hide(networkErrorMsg);
-  if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval) {
+  if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval && !currentAbortController) {
     fetchLivePrices();
   }
 });

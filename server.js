@@ -432,6 +432,48 @@ function rawAmountToDecimal(rawAmountStr, decimals) {
   return decimals > 0 ? `${whole}.${fractionStr}` : `${whole}`; // returns a String, never a Number
 }
 
+function parseTokenAccountAmount(rawAmount) {
+  if (typeof rawAmount === 'bigint') return rawAmount;
+
+  if (typeof rawAmount === 'number') {
+    if (!Number.isFinite(rawAmount) || !Number.isInteger(rawAmount)) return null;
+    return BigInt(rawAmount);
+  }
+
+  if (typeof rawAmount === 'string') {
+    const trimmed = rawAmount.trim();
+    if (!/^-?\d+$/.test(trimmed)) return null;
+    return BigInt(trimmed);
+  }
+
+  return null;
+}
+
+function aggregateTokenAccountsByMint(accounts = []) {
+  const grouped = new Map();
+
+  for (const account of accounts) {
+    const mint = account?.mint;
+    if (!mint) continue;
+
+    const amount = parseTokenAccountAmount(account.amount);
+    if (amount == null || amount <= 0n) continue;
+
+    const existing = grouped.get(mint);
+    if (existing) {
+      existing.amount += amount;
+      continue;
+    }
+
+    grouped.set(mint, {
+      ...account,
+      amount,
+    });
+  }
+
+  return [...grouped.values()];
+}
+
 // Stage 1 — Helius DAS getAssetBatch (metadata + price, requires showFungibleTokens)
 async function resolveTokenMetadata(mints) {
   const metadataMap = new Map();
@@ -578,7 +620,7 @@ app.post('/api/token-prices-live', async (req, res) => {
   }
 
   try {
-    const mintList = mints.filter(Boolean);
+    const mintList = [...new Set(mints.filter(Boolean))];
     const jupiterPrices = await resolveJupiterPrices(mintList);
 
     // Raydium /mint/price confirmed sanctioned for UI rendering at this cadence
@@ -659,65 +701,70 @@ app.get('/api/tokens', async (req, res) => {
       // Step 2 — resolve metadata for all mints in one batch call
 
       const preFilter = accounts.filter((t) => BigInt(t.amount) > 0n);
-      const preMints = preFilter.map((t) => t.mint);
+const preMints = [...new Set(preFilter.map((t) => t.mint).filter(Boolean))];
 
-      // Stage 1 — Helius: metadata ONLY (name, symbol, logo, decimals, interface) — no pricing
-      const metadataMap = await resolveTokenMetadata(preMints);
+// Stage 1 — Helius: metadata ONLY (name, symbol, logo, decimals, interface) — no pricing
+const metadataMap = await resolveTokenMetadata(preMints);
 
-      // getTokenAccounts returns NFTs too — on Solana an NFT is just a token account
-      // with supply 1 / decimals 0, no on-chain distinction at that layer. Filter them
-      // out here using the `interface` field Helius resolves for each mint.
-      const NFT_INTERFACES = new Set([
-        'V1_NFT',
-        'V2_NFT',
-        'V1_PRINT',
-        'LEGACY_NFT',
-        'ProgrammableNFT',
-        'MplCoreAsset',
-        'MplCoreCollection',
-      ]);
-      const filtered = preFilter.filter((t) => {
-        const iface = metadataMap.get(t.mint)?.interface;
-        return !iface || !NFT_INTERFACES.has(iface);
-      });
-      const mints = filtered.map((t) => t.mint);
+// getTokenAccounts returns NFTs too — on Solana an NFT is just a token account
+// with supply 1 / decimals 0, no on-chain distinction at that layer. Filter them
+// out here using the `interface` field Helius resolves for each mint.
+const NFT_INTERFACES = new Set([
+  'V1_NFT',
+  'V2_NFT',
+  'V1_PRINT',
+  'LEGACY_NFT',
+  'ProgrammableNFT',
+  'MplCoreAsset',
+  'MplCoreCollection',
+]);
 
-      // Stage 2 — Jupiter: primary live pricing for EVERY mint
-      const jupiterPrices = await resolveJupiterPrices(mints);
+const filtered = preFilter.filter((t) => {
+  const iface = metadataMap.get(t.mint)?.interface;
+  return !iface || !NFT_INTERFACES.has(iface);
+});
 
-      // Stage 3 — Raydium: fallback only for mints Jupiter omitted
-      const missingAfterJupiter = mints.filter((mint) => !jupiterPrices.has(mint));
-      const raydiumPrices = await resolveRaydiumPrices(missingAfterJupiter);
+// Aggregate duplicate token accounts by mint before pricing.
+// This is the key fix for duplicate USDC / same-mint rows in the token list and pie chart.
+const aggregated = aggregateTokenAccountsByMint(filtered);
+const mints = aggregated.map((t) => t.mint);
 
-      mappedTokens = filtered
-        .map((t) => {
-          const meta = metadataMap.get(t.mint);
-          const decimals = meta?.decimals ?? 0;
-          const price =
-            jupiterPrices.get(t.mint)?.priceUsd ??
-            raydiumPrices.get(t.mint)?.priceUsd ??
-            null;
-          const priceSource =
-            jupiterPrices.get(t.mint)?.priceSource ||
-            raydiumPrices.get(t.mint)?.priceSource ||
-            null;
+// Stage 2 — Jupiter: primary live pricing for EVERY mint
+const jupiterPrices = await resolveJupiterPrices(mints);
 
-          return {
-            mint: t.mint,
-            amount: rawAmountToDecimal(t.amount, decimals), // BigInt-safe
-            symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
-            name: meta?.name || null,
-            logoURI: meta?.logoURI || null,
-            priceUsd: price,
-            priceSource,
-            // Explicitly checked all three tiers and found nothing — e.g. still on a
-            // Pump.fun bonding curve. Distinct from "haven't checked yet" states elsewhere.
-            priceUnavailable: price === null,
-          };
-        })
-        .filter((t) => parseFloat(t.amount) > 0);
+// Stage 3 — Raydium: fallback only for mints Jupiter omitted
+const missingAfterJupiter = mints.filter((mint) => !jupiterPrices.has(mint));
+const raydiumPrices = await resolveRaydiumPrices(missingAfterJupiter);
 
-      res.json({ tokens: mappedTokens });
+mappedTokens = aggregated
+  .map((t) => {
+    const meta = metadataMap.get(t.mint);
+    const decimals = meta?.decimals ?? 0;
+    const price =
+      jupiterPrices.get(t.mint)?.priceUsd ??
+      raydiumPrices.get(t.mint)?.priceUsd ??
+      null;
+    const priceSource =
+      jupiterPrices.get(t.mint)?.priceSource ||
+      raydiumPrices.get(t.mint)?.priceSource ||
+      null;
+
+    return {
+      mint: t.mint,
+      amount: rawAmountToDecimal(t.amount.toString(), decimals), // aggregated raw amount
+      symbol: meta?.symbol || (t.mint.slice(0, 4) + '...' + t.mint.slice(-4)),
+      name: meta?.name || null,
+      logoURI: meta?.logoURI || null,
+      priceUsd: price,
+      priceSource,
+      // Explicitly checked all three tiers and found nothing — e.g. still on a
+      // Pump.fun bonding curve. Distinct from "haven't checked yet" states elsewhere.
+      priceUnavailable: price === null,
+    };
+  })
+  .filter((t) => parseFloat(t.amount) > 0);
+
+res.json({ tokens: mappedTokens });
     } else if (SHYFT_API_KEY) {
       // Backup — Shyft API
       const data = await safeFetch(
