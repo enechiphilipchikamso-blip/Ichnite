@@ -22,7 +22,7 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
-  TRACE_REQUEST_COST: 5, // sol-price + sol-balance + tokens + nfts + transactions
+  TRACE_REQUEST_COST: 6, // sol-price + sol-balance + tokens + nfts + transactions + token-metadata when needed
 });
 
 // ════════════════════════════════════════
@@ -504,21 +504,23 @@ function hideAllMessages() {
 
 const RATE_LIMIT_STATE_STORAGE_KEY = 'IchniteRateLimitState';
 
-function readPersistedRateLimitState() {
+function readRateLimitStateFromStorage(storage) {
   try {
-    const raw = sessionStorage.getItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    if (!storage) return null;
+
+    const raw = storage.getItem(RATE_LIMIT_STATE_STORAGE_KEY);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
     const resetAt = Number(parsed?.resetAt);
 
     if (!Number.isFinite(resetAt)) {
-      sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+      storage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
       return null;
     }
 
     if (resetAt <= Date.now()) {
-      sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+      storage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
       return null;
     }
 
@@ -531,13 +533,27 @@ function readPersistedRateLimitState() {
   }
 }
 
+function readPersistedRateLimitState() {
+  const candidates = [
+    readRateLimitStateFromStorage(sessionStorage),
+    readRateLimitStateFromStorage(localStorage),
+  ].filter(Boolean);
+
+  if (candidates.length === 0) return null;
+
+  // Prefer the latest valid reset time available.
+  return candidates.reduce((latest, current) => {
+    return current.resetAt > latest.resetAt ? current : latest;
+  });
+}
+
 function persistRateLimitState(resetAt) {
   try {
     if (!Number.isFinite(resetAt)) return;
-    sessionStorage.setItem(
-      RATE_LIMIT_STATE_STORAGE_KEY,
-      JSON.stringify({ resetAt })
-    );
+    const payload = JSON.stringify({ resetAt });
+
+    sessionStorage.setItem(RATE_LIMIT_STATE_STORAGE_KEY, payload);
+    localStorage.setItem(RATE_LIMIT_STATE_STORAGE_KEY, payload);
   } catch {
     // silent fail
   }
@@ -546,6 +562,12 @@ function persistRateLimitState(resetAt) {
 function clearPersistedRateLimitState() {
   try {
     sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+  } catch {
+    // silent fail
+  }
+
+  try {
+    localStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
   } catch {
     // silent fail
   }
@@ -559,15 +581,16 @@ function normalizeRateLimitInfo(info = {}) {
   const fallbackSeconds = 15 * 60;
   const resetAtValue = Number(payload.resetAt);
   const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
+  const persisted = readPersistedRateLimitState();
 
   if (Number.isFinite(resetAtValue) && resetAtValue > Date.now()) {
+    const resetAt = persisted ? Math.max(resetAtValue, persisted.resetAt) : resetAtValue;
     return {
-      retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
-      resetAt: resetAtValue,
+      retryAfterSeconds: Math.max(0, Math.ceil((resetAt - Date.now()) / 1000)),
+      resetAt,
     };
   }
 
-  const persisted = readPersistedRateLimitState();
   if (persisted) {
     return persisted;
   }
@@ -649,6 +672,13 @@ function startRateLimitCountdown(info = {}) {
 
   tick();
   rateLimitTickInterval = setInterval(tick, 1000);
+}
+
+function restorePersistedRateLimitCountdown() {
+  const persisted = readPersistedRateLimitState();
+  if (persisted) {
+    startRateLimitCountdown(persisted);
+  }
 }
 
 function enterRateLimitState(info = {}) {
@@ -2270,7 +2300,7 @@ async function fetchTransactions(address) {
       renderBarChart(allTransactions, currentBarRange, currentYearSelection);
     }
 
-    renderRecentTransactions(allTransactions);
+    await renderRecentTransactions(allTransactions, { signal });
 
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
@@ -2356,23 +2386,35 @@ function getTxIconSymbol(tx) {
   return '↓';
 }
 
-async function renderRecentTransactions(transactions) {
+async function renderRecentTransactions(transactions, options = {}) {
+  const signal = options.signal || currentAbortController?.signal;
+  const safeTransactions = Array.isArray(transactions) ? transactions : [];
+
   const txMints = [...new Set(
-    transactions
+    safeTransactions
       .flatMap(tx => tx.tokenTransfers?.map(t => t.mint) || [])
       .filter(Boolean)
   )];
+
   let txTokenMetadata = new Map();
-  if (txMints.length > 0) {
+  if (txMints.length > 0 && !signal?.aborted && !rateLimitedUntil) {
     try {
-      const res = await fetch(`${API_BASE}/api/token-metadata?mints=${txMints.join(',')}`);
+      const res = await fetch(`${API_BASE}/api/token-metadata?mints=${txMints.join(',')}`, {
+        signal,
+        cache: 'no-store',
+      });
       if (res.ok) {
         const data = await res.json();
         txTokenMetadata = new Map(Object.entries(data.metadata || {}));
       }
-    } catch { /* fall through to mint-address display */ }
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        // fall through to mint-address display
+      }
+    }
   }
-  if (!transactions || transactions.length === 0) {
+
+  if (safeTransactions.length === 0) {
     hideSkeletonShowContent(txSkeleton, last7txList);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
@@ -2381,7 +2423,7 @@ async function renderRecentTransactions(transactions) {
     return;
   }
 
-  const recent = transactions.slice(0, CONFIG.MAX_RECENT_TX);
+  const recent = safeTransactions.slice(0, CONFIG.MAX_RECENT_TX);
   const grouped = {};
   recent.forEach(tx => {
     const dateKey = formatTxDate(tx.timestamp || tx.blockTime);
@@ -2968,3 +3010,4 @@ window.addEventListener('online', () => {
 // ════════════════════════════════════════
 
 renderSearchHistory();
+restorePersistedRateLimitCountdown();
