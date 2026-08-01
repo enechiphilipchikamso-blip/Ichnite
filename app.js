@@ -9,7 +9,7 @@
 // ════════════════════════════════════════
 // ── 1. CONFIGURATION — named constants frozen ──
 // Improvement 7: Named constants and freeze configuration objects
-// ════════════════════════════════════════
+/// ════════════════════════════════════════
 
 const CONFIG = Object.freeze({
   RATE_LIMIT_MS: 3000,
