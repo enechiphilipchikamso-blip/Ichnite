@@ -575,37 +575,33 @@ function clearPersistedRateLimitState() {
   }
 }
 
-function normalizeLockoutState(info = {}) {
+function normalizeLockoutState(info = {}, { useTiming = false, allowFallback = false } = {}) {
   const payload = typeof info === 'number'
     ? { rateLimited: true, retryAfterSeconds: info }
     : (info || {});
 
   const now = Date.now();
   const persisted = readPersistedRateLimitState();
+  const persistedLockoutResetAt =
+    persisted?.lockoutResetAt > now ? persisted.lockoutResetAt : null;
 
-  const requestWindowResetAtValue = Number(payload.requestWindowResetAt ?? payload.resetAt);
-  const lockoutResetAtValue = Number(payload.lockoutResetAt);
+  const requestWindowResetAtValue = Number(payload.requestWindowResetAt);
+  const lockoutResetAtValue = Number(payload.lockoutResetAt ?? payload.resetAt);
   const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
   const remainingValue = Number(payload.remaining);
 
   let lockoutResetAt = null;
 
-  if (Number.isFinite(lockoutResetAtValue) && lockoutResetAtValue > now) {
+  if (payload.rateLimited && Number.isFinite(lockoutResetAtValue) && lockoutResetAtValue > now) {
     lockoutResetAt = lockoutResetAtValue;
-  }
-
-  if (persisted && persisted.lockoutResetAt > now) {
-    if (!lockoutResetAt || persisted.lockoutResetAt > lockoutResetAt + 1000) {
-      lockoutResetAt = persisted.lockoutResetAt;
-    }
-  }
-
-  if (!lockoutResetAt && payload.rateLimited) {
-    if (Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue > 0) {
-      lockoutResetAt = now + retryAfterSecondsValue * 1000;
-    } else if (!persisted) {
-      lockoutResetAt = now + 15 * 60 * 1000;
-    }
+  } else if (persistedLockoutResetAt) {
+    lockoutResetAt = persistedLockoutResetAt;
+  } else if (payload.rateLimited && useTiming && Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue > 0) {
+    lockoutResetAt = now + retryAfterSecondsValue * 1000;
+  } else if (payload.rateLimited && useTiming && Number.isFinite(requestWindowResetAtValue) && requestWindowResetAtValue > now) {
+    lockoutResetAt = requestWindowResetAtValue;
+  } else if (payload.rateLimited && allowFallback) {
+    lockoutResetAt = now + 15 * 60 * 1000;
   }
 
   return {
@@ -649,7 +645,7 @@ function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false
 }
 
 function startRateLimitCountdown(info = {}) {
-  const normalized = normalizeLockoutState(info);
+  const normalized = normalizeRateLimitInfo(info, { useTiming: true });
   const lockoutResetAt = Number(normalized.lockoutResetAt);
   const msgEl = document.getElementById('rateLimitMsg');
   if (!msgEl || !Number.isFinite(lockoutResetAt)) return;
@@ -790,7 +786,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
 
   netWorthValue.textContent = '';
   hide(netWorthSkeleton);
-  hide(netWorthLabel);
+  show(netWorthLabel);
   hide(netWorthValue);
 
   const netWorthMsg = document.createElement('p');
@@ -905,33 +901,44 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   }
 }
 
-function normalizeRateLimitInfo(info = {}) {
-  return normalizeLockoutState(info);
+function normalizeRateLimitInfo(info = {}, options = {}) {
+  return normalizeLockoutState(info, options);
 }
 
-function enterRateLimitState(info = {}) {
-  const normalized = normalizeRateLimitInfo({
-    ...info,
-    rateLimited: true,
-  });
+function enterRateLimitState(info = {}, { useTiming = true, allowFallback = false } = {}) {
+  const normalized = normalizeRateLimitInfo(
+    {
+      ...info,
+      rateLimited: true,
+    },
+    { useTiming, allowFallback }
+  );
 
-  if (normalized.lockoutResetAt) {
-    startRateLimitCountdown(normalized);
+  const currentUntil = Number(rateLimitedUntil);
+  const normalizedResetAt = Number(normalized.lockoutResetAt);
+
+  if (
+    Number.isFinite(currentUntil) &&
+    Number.isFinite(normalizedResetAt) &&
+    normalizedResetAt <= currentUntil
+  ) {
+    normalized.lockoutResetAt = currentUntil;
+    normalized.retryAfterSeconds = Math.max(0, Math.ceil((currentUntil - Date.now()) / 1000));
+  }
+
+  if (!normalized.lockoutResetAt) {
+    if (!allowFallback) return false;
+
+    startRateLimitCountdown({
+      rateLimited: true,
+      retryAfterSeconds: 15 * 60,
+    });
   } else {
-    const persisted = readPersistedRateLimitState();
-    if (persisted) {
-      startRateLimitCountdown(persisted);
-    } else {
-      startRateLimitCountdown({
-        rateLimited: true,
-        retryAfterSeconds: Number.isFinite(normalized.retryAfterSeconds) && normalized.retryAfterSeconds > 0
-          ? normalized.retryAfterSeconds
-          : 15 * 60,
-      });
-    }
+    startRateLimitCountdown(normalized);
   }
 
   showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+  return true;
 }
 
 async function checkRateLimitGate() {
@@ -946,9 +953,24 @@ async function checkRateLimitGate() {
       console.warn('Rate-limit status endpoint returned non-OK response:', res.status);
       if (persisted) {
         startRateLimitCountdown(persisted);
-        return { rateLimited: true, checked: false, ...persisted };
+        return {
+          rateLimited: true,
+          checked: false,
+          remaining: 0,
+          retryAfterSeconds: persisted.retryAfterSeconds,
+          lockoutResetAt: persisted.lockoutResetAt,
+          requestWindowResetAt: null,
+        };
       }
-      return { rateLimited: false, checked: false };
+
+      return {
+        rateLimited: false,
+        checked: false,
+        remaining: null,
+        retryAfterSeconds: 0,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
+      };
     }
 
     const data = await res.json().catch(() => null);
@@ -957,14 +979,29 @@ async function checkRateLimitGate() {
       console.warn('Rate-limit status endpoint returned invalid JSON');
       if (persisted) {
         startRateLimitCountdown(persisted);
-        return { rateLimited: true, checked: false, ...persisted };
+        return {
+          rateLimited: true,
+          checked: false,
+          remaining: 0,
+          retryAfterSeconds: persisted.retryAfterSeconds,
+          lockoutResetAt: persisted.lockoutResetAt,
+          requestWindowResetAt: null,
+        };
       }
-      return { rateLimited: false, checked: false };
+
+      return {
+        rateLimited: false,
+        checked: false,
+        remaining: null,
+        retryAfterSeconds: 0,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
+      };
     }
 
-    const normalized = normalizeRateLimitInfo(data);
+    const normalized = normalizeRateLimitInfo(data, { useTiming: true });
 
-    if (normalized.rateLimited) {
+    if (normalized.lockoutResetAt) {
       startRateLimitCountdown(normalized);
       return {
         rateLimited: true,
@@ -1012,7 +1049,16 @@ async function checkRateLimitGate() {
         error,
       };
     }
-    return { rateLimited: false, checked: false, error };
+
+    return {
+      rateLimited: false,
+      checked: false,
+      remaining: null,
+      retryAfterSeconds: 0,
+      lockoutResetAt: null,
+      requestWindowResetAt: null,
+      error,
+    };
   }
 }
 
@@ -1048,9 +1094,9 @@ function showError(type, customMessage) {
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
-  if (response.status === 429) {
+    if (response.status === 429) {
     const body = await response.json().catch(() => ({}));
-    enterRateLimitState(body);
+    enterRateLimitState(body, { allowFallback: true });
     throw { type: 'ratelimit' };
   }
 
@@ -1354,7 +1400,9 @@ async function handleSearch() {
   if (rateLimitCheck.rateLimited || insufficientTraceBudget) {
     setSearchLoading(false);
     currentAbortController = null;
-    enterRateLimitState(rateLimitCheck);
+    if (!enterRateLimitState(rateLimitCheck, { useTiming: true, allowFallback: false })) {
+  return;
+}
     return;
   }
 
@@ -1417,9 +1465,7 @@ async function handleSearch() {
       updateNetWorth();
     }
 
-    if (!rateLimitedUntil && lastRateLimitInfo) {
-      startRateLimitCountdown(lastRateLimitInfo.retryAfterSeconds);
-    } else if (!rateLimitedUntil && failedFetchCount >= 4) {
+        if (!rateLimitedUntil && failedFetchCount >= 4) {
       showError('server');
     }
   } finally {
@@ -1461,11 +1507,11 @@ async function fetchSolBalance(address) {
   const priceResponse = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
-  if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
+    if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429
       ? await priceResponse.json().catch(() => ({}))
       : await balanceResponse.json().catch(() => ({}));
-    enterRateLimitState(rateLimitBody);
+    enterRateLimitState(rateLimitBody, { allowFallback: true });
     return;
   }
 
@@ -2827,9 +2873,9 @@ async function fetchLivePrices() {
 
     if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-    if (res.status === 429) {
+        if (res.status === 429) {
       const body = await res.json().catch(() => ({}));
-      enterRateLimitState(body);
+      enterRateLimitState(body, { allowFallback: true });
       return;
     }
 
@@ -2878,9 +2924,9 @@ async function fetchLivePrices() {
 
       if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-      if (priceRes.status === 429) {
+            if (priceRes.status === 429) {
         const body = await priceRes.json().catch(() => ({}));
-        enterRateLimitState(body);
+        enterRateLimitState(body, { allowFallback: true });
         return;
       }
 

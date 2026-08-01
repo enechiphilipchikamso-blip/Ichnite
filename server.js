@@ -267,14 +267,23 @@ function buildRateLimitPayload({ rateLimited, remaining, retryAfterSeconds, rese
 function getRequestWindowSnapshot(rateLimitInfo) {
   const totalHits = Number(rateLimitInfo?.totalHits ?? 0);
   const requestWindowResetAt = getResetAtMillis(rateLimitInfo?.resetTime);
-  const remaining = Math.max(0, RATE_LIMIT_LIMIT - totalHits);
-  const retryAfterSeconds = getSecondsUntil(requestWindowResetAt);
+
+  if (!Number.isFinite(requestWindowResetAt) || requestWindowResetAt <= Date.now()) {
+    return {
+      totalHits,
+      remaining: RATE_LIMIT_LIMIT,
+      requestWindowResetAt: null,
+      retryAfterSeconds: 0,
+      expired: true,
+    };
+  }
 
   return {
     totalHits,
-    remaining,
+    remaining: Math.max(0, RATE_LIMIT_LIMIT - totalHits),
     requestWindowResetAt,
-    retryAfterSeconds,
+    retryAfterSeconds: getSecondsUntil(requestWindowResetAt),
+    expired: false,
   };
 }
 
@@ -327,8 +336,6 @@ app.get('/api/rate-limit-status', async (req, res) => {
   try {
     const rateLimitKey = getRateLimitKey(req);
     const activeLockout = getActiveRateLimitLockout(rateLimitKey);
-    const info = await apiLimiter.getKey(rateLimitKey);
-    const windowSnapshot = getRequestWindowSnapshot(info);
 
     if (activeLockout) {
       const retryAfterSeconds = getSecondsUntil(activeLockout.resetAt);
@@ -340,11 +347,35 @@ app.get('/api/rate-limit-status', async (req, res) => {
         retryAfterSeconds,
         resetAt: activeLockout.resetAt,
         lockoutResetAt: activeLockout.resetAt,
-        requestWindowResetAt: windowSnapshot.requestWindowResetAt,
+        requestWindowResetAt: null,
       });
     }
 
+    const info = await apiLimiter.getKey(rateLimitKey);
+
     if (!info) {
+      return res.json({
+        error: null,
+        rateLimited: false,
+        remaining: RATE_LIMIT_LIMIT,
+        retryAfterSeconds: 0,
+        resetAt: null,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
+      });
+    }
+
+    const windowSnapshot = getRequestWindowSnapshot(info);
+
+    if (windowSnapshot.expired) {
+      if (typeof apiLimiter.resetKey === 'function') {
+        try {
+          await apiLimiter.resetKey(rateLimitKey);
+        } catch (resetError) {
+          console.warn('Rate-limit status resetKey failed:', resetError.message);
+        }
+      }
+
       return res.json({
         error: null,
         rateLimited: false,
