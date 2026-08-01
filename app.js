@@ -592,10 +592,14 @@ function normalizeLockoutState(info = {}, { useTiming = false, allowFallback = f
 
   let lockoutResetAt = null;
 
-    if (payload.rateLimited && Number.isFinite(lockoutResetAtValue) && lockoutResetAtValue > now) {
+      if (payload.rateLimited && Number.isFinite(lockoutResetAtValue) && lockoutResetAtValue > now) {
     lockoutResetAt = lockoutResetAtValue;
   } else if (persistedLockoutResetAt) {
     lockoutResetAt = persistedLockoutResetAt;
+  } else if (payload.rateLimited && useTiming && Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue > 0) {
+    lockoutResetAt = now + retryAfterSecondsValue * 1000;
+  } else if (payload.rateLimited && useTiming && Number.isFinite(requestWindowResetAtValue) && requestWindowResetAtValue > now) {
+    lockoutResetAt = requestWindowResetAtValue;
   } else if (payload.rateLimited && allowFallback) {
     lockoutResetAt = now + 15 * 60 * 1000;
   }
@@ -922,10 +926,15 @@ function enterRateLimitState(info = {}, { useTiming = true, allowFallback = fals
     normalized.retryAfterSeconds = Math.max(0, Math.ceil((currentUntil - Date.now()) / 1000));
   }
 
-    if (!normalized.lockoutResetAt) {
+      if (!normalized.lockoutResetAt) {
     if (!allowFallback) return false;
 
-    normalized.lockoutResetAt = Date.now() + 15 * 60 * 1000;
+    startRateLimitCountdown({
+      rateLimited: true,
+      retryAfterSeconds: 15 * 60,
+    });
+  } else {
+    startRateLimitCountdown(normalized);
   }
 
   startRateLimitCountdown(normalized);

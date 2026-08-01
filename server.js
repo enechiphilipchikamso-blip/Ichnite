@@ -231,9 +231,11 @@ function getActiveRateLimitLockout(rateLimitKey) {
 
 function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIMIT_LOCKOUT_MS) {
   const existing = purgeExpiredRateLimitLockout(rateLimitKey);
-  if (existing) return existing;
+  const nextResetAt = existing ? Math.max(existing.resetAt, resetAt) : resetAt;
 
-  const nextResetAt = resetAt;
+  if (existing?.timer) {
+    clearTimeout(existing.timer);
+  }
 
   const delayMs = Math.max(0, nextResetAt - Date.now());
   const timer = setTimeout(() => {
@@ -307,8 +309,8 @@ const apiLimiter = rateLimit({
   handler: (req, res, next, options) => {
     const rateLimitKey = getRateLimitKey(req);
     const requestWindowResetAt = getResetAtMillis(req.rateLimit?.resetTime);
-    const lockout = getActiveRateLimitLockout(rateLimitKey);
-const retryAfterSeconds = lockout ? getSecondsUntil(lockout.resetAt) : RATE_LIMIT_LOCKOUT_MS / 1000;
+    const lockout = setActiveRateLimitLockout(rateLimitKey);
+const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
 
     res.setHeader('Retry-After', String(retryAfterSeconds));
 
@@ -386,15 +388,16 @@ app.get('/api/rate-limit-status', async (req, res) => {
     }
 
     if (windowSnapshot.remaining <= 0) {
-  const activeLockout = getActiveRateLimitLockout(rateLimitKey);
+  const newlyActivatedLockout = setActiveRateLimitLockout(rateLimitKey);
+  const retryAfterSeconds = getSecondsUntil(newlyActivatedLockout.resetAt);
 
   return res.json({
     error: null,
     rateLimited: true,
     remaining: 0,
-    retryAfterSeconds: activeLockout ? getSecondsUntil(activeLockout.resetAt) : RATE_LIMIT_LOCKOUT_MS / 1000,
-    resetAt: activeLockout?.resetAt ?? null,
-    lockoutResetAt: activeLockout?.resetAt ?? null,
+    retryAfterSeconds,
+    resetAt: newlyActivatedLockout.resetAt,
+    lockoutResetAt: newlyActivatedLockout.resetAt,
     requestWindowResetAt: windowSnapshot.requestWindowResetAt,
   });
 }
@@ -478,9 +481,7 @@ app.use('/api', (req, res, next) => {
   const remaining = Number(req.rateLimit?.remaining);
 if (Number.isFinite(remaining) && remaining <= 0) {
   const rateLimitKey = getRateLimitKey(req);
-  if (!getActiveRateLimitLockout(rateLimitKey)) {
-    setActiveRateLimitLockout(rateLimitKey);
-  }
+  setActiveRateLimitLockout(rateLimitKey);
 }
 
   return next();
