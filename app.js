@@ -502,31 +502,32 @@ function hideAllMessages() {
   hide(emptySearchMsg);
 }
 
-const RATE_LIMIT_STATE_STORAGE_KEY = 'IchniteRateLimitState';
+const LOCKOUT_STATE_STORAGE_KEY = 'IchniteLockoutState';
+const LEGACY_RATE_LIMIT_STATE_STORAGE_KEY = 'IchniteRateLimitState';
 
-function readRateLimitStateFromStorage(storage) {
+function readLockoutStateFromStorage(storage) {
   try {
     if (!storage) return null;
 
-    const raw = storage.getItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    const raw = storage.getItem(LOCKOUT_STATE_STORAGE_KEY);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);
-    const resetAt = Number(parsed?.resetAt);
+    const lockoutResetAt = Number(parsed?.lockoutResetAt);
 
-    if (!Number.isFinite(resetAt)) {
-      storage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    if (!Number.isFinite(lockoutResetAt)) {
+      storage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
       return null;
     }
 
-    if (resetAt <= Date.now()) {
-      storage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    if (lockoutResetAt <= Date.now()) {
+      storage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
       return null;
     }
 
     return {
-      resetAt,
-      retryAfterSeconds: Math.max(0, Math.ceil((resetAt - Date.now()) / 1000)),
+      lockoutResetAt,
+      retryAfterSeconds: Math.max(0, Math.ceil((lockoutResetAt - Date.now()) / 1000)),
     };
   } catch {
     return null;
@@ -535,25 +536,24 @@ function readRateLimitStateFromStorage(storage) {
 
 function readPersistedRateLimitState() {
   const candidates = [
-    readRateLimitStateFromStorage(sessionStorage),
-    readRateLimitStateFromStorage(localStorage),
+    readLockoutStateFromStorage(sessionStorage),
+    readLockoutStateFromStorage(localStorage),
   ].filter(Boolean);
 
   if (candidates.length === 0) return null;
 
-  // Prefer the latest valid reset time available.
-  return candidates.reduce((latest, current) => {
-    return current.resetAt > latest.resetAt ? current : latest;
-  });
+  return candidates.reduce((latest, current) => (
+    current.lockoutResetAt > latest.lockoutResetAt ? current : latest
+  ));
 }
 
-function persistRateLimitState(resetAt) {
+function persistRateLimitState(lockoutResetAt) {
   try {
-    if (!Number.isFinite(resetAt)) return;
-    const payload = JSON.stringify({ resetAt });
+    if (!Number.isFinite(lockoutResetAt)) return;
+    const payload = JSON.stringify({ lockoutResetAt });
 
-    sessionStorage.setItem(RATE_LIMIT_STATE_STORAGE_KEY, payload);
-    localStorage.setItem(RATE_LIMIT_STATE_STORAGE_KEY, payload);
+    sessionStorage.setItem(LOCKOUT_STATE_STORAGE_KEY, payload);
+    localStorage.setItem(LOCKOUT_STATE_STORAGE_KEY, payload);
   } catch {
     // silent fail
   }
@@ -561,48 +561,63 @@ function persistRateLimitState(resetAt) {
 
 function clearPersistedRateLimitState() {
   try {
-    sessionStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    sessionStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+    sessionStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
   } catch {
     // silent fail
   }
 
   try {
-    localStorage.removeItem(RATE_LIMIT_STATE_STORAGE_KEY);
+    localStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
   } catch {
     // silent fail
   }
 }
 
-function normalizeRateLimitInfo(info = {}) {
+function normalizeLockoutState(info = {}) {
   const payload = typeof info === 'number'
-    ? { retryAfterSeconds: info }
+    ? { rateLimited: true, retryAfterSeconds: info }
     : (info || {});
 
-  const fallbackSeconds = 15 * 60;
-  const resetAtValue = Number(payload.resetAt);
-  const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
+  const now = Date.now();
   const persisted = readPersistedRateLimitState();
 
-  if (Number.isFinite(resetAtValue) && resetAtValue > Date.now()) {
-    const resetAt = persisted ? Math.max(resetAtValue, persisted.resetAt) : resetAtValue;
-    return {
-      retryAfterSeconds: Math.max(0, Math.ceil((resetAt - Date.now()) / 1000)),
-      resetAt,
-    };
+  const requestWindowResetAtValue = Number(payload.requestWindowResetAt ?? payload.resetAt);
+  const lockoutResetAtValue = Number(payload.lockoutResetAt);
+  const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
+  const remainingValue = Number(payload.remaining);
+
+  let lockoutResetAt = null;
+
+  if (Number.isFinite(lockoutResetAtValue) && lockoutResetAtValue > now) {
+    lockoutResetAt = lockoutResetAtValue;
   }
 
-  if (persisted) {
-    return persisted;
+  if (persisted && persisted.lockoutResetAt > now) {
+    if (!lockoutResetAt || persisted.lockoutResetAt > lockoutResetAt + 1000) {
+      lockoutResetAt = persisted.lockoutResetAt;
+    }
   }
 
-  const retryAfterSeconds =
-    Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
-      ? retryAfterSecondsValue
-      : fallbackSeconds;
+  if (!lockoutResetAt && payload.rateLimited) {
+    if (Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue > 0) {
+      lockoutResetAt = now + retryAfterSecondsValue * 1000;
+    } else if (!persisted) {
+      lockoutResetAt = now + 15 * 60 * 1000;
+    }
+  }
 
   return {
-    retryAfterSeconds,
-    resetAt: Date.now() + retryAfterSeconds * 1000,
+    rateLimited: Boolean(payload.rateLimited || lockoutResetAt),
+    remaining: Number.isFinite(remainingValue) ? remainingValue : null,
+    requestWindowResetAt: Number.isFinite(requestWindowResetAtValue) ? requestWindowResetAtValue : null,
+    lockoutResetAt,
+    retryAfterSeconds: lockoutResetAt
+      ? Math.max(0, Math.ceil((lockoutResetAt - now) / 1000))
+      : (Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
+        ? retryAfterSecondsValue
+        : 0),
   };
 }
 
@@ -634,20 +649,34 @@ function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false
 }
 
 function startRateLimitCountdown(info = {}) {
-  const normalized = normalizeRateLimitInfo(info);
+  const normalized = normalizeLockoutState(info);
+  const lockoutResetAt = Number(normalized.lockoutResetAt);
   const msgEl = document.getElementById('rateLimitMsg');
-  if (!msgEl) return;
+  if (!msgEl || !Number.isFinite(lockoutResetAt)) return;
+
+  const sameActiveLockout =
+    Number.isFinite(rateLimitedUntil) &&
+    Math.abs(rateLimitedUntil - lockoutResetAt) < 1000 &&
+    rateLimitTickInterval;
+
+  if (sameActiveLockout) {
+    searchBtn.disabled = true;
+    searchBtn.classList.remove('loading');
+    searchBtn.innerHTML = 'Trace';
+    show(msgEl);
+    return;
+  }
 
   if (rateLimitTickInterval) {
     clearInterval(rateLimitTickInterval);
     rateLimitTickInterval = null;
   }
 
-  rateLimitedUntil = normalized.resetAt;
+  rateLimitedUntil = lockoutResetAt;
   lastRateLimitInfo = normalized;
   lastSearchTime = 0;
 
-  persistRateLimitState(rateLimitedUntil);
+  persistRateLimitState(lockoutResetAt);
 
   searchBtn.disabled = true;
   searchBtn.classList.remove('loading');
@@ -656,7 +685,7 @@ function startRateLimitCountdown(info = {}) {
   show(msgEl);
 
   const tick = () => {
-    const remainingMs = Math.max(0, rateLimitedUntil - Date.now());
+    const remainingMs = Math.max(0, lockoutResetAt - Date.now());
     const remaining = Math.ceil(remainingMs / 1000);
 
     if (remaining <= 0) {
@@ -877,44 +906,29 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
 }
 
 function normalizeRateLimitInfo(info = {}) {
-  const fallbackSeconds = 15 * 60;
-  const retryAfterSecondsValue = Number(info.retryAfterSeconds);
-  const resetAtValue = Number(info.resetAt);
-
-  if (Number.isFinite(resetAtValue)) {
-    return {
-      retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
-      resetAt: resetAtValue,
-    };
-  }
-
-  const retryAfterSeconds =
-    Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
-      ? retryAfterSecondsValue
-      : fallbackSeconds;
-
-  return {
-    retryAfterSeconds,
-    resetAt: Date.now() + retryAfterSeconds * 1000,
-  };
+  return normalizeLockoutState(info);
 }
 
 function enterRateLimitState(info = {}) {
-  const normalized = normalizeRateLimitInfo(info);
-  const currentResetAt = Number(rateLimitedUntil);
-  const existingResetAt = Number(lastRateLimitInfo?.resetAt);
+  const normalized = normalizeRateLimitInfo({
+    ...info,
+    rateLimited: true,
+  });
 
-  lastRateLimitInfo = normalized;
-
-  const shouldRefreshCountdown =
-    !Number.isFinite(currentResetAt) ||
-    normalized.resetAt > currentResetAt + 1000 ||
-    (Number.isFinite(existingResetAt) && normalized.resetAt > existingResetAt + 1000);
-
-  if (shouldRefreshCountdown) {
-    startRateLimitCountdown(normalized.retryAfterSeconds);
+  if (normalized.lockoutResetAt) {
+    startRateLimitCountdown(normalized);
   } else {
-    rateLimitedUntil = normalized.resetAt;
+    const persisted = readPersistedRateLimitState();
+    if (persisted) {
+      startRateLimitCountdown(persisted);
+    } else {
+      startRateLimitCountdown({
+        rateLimited: true,
+        retryAfterSeconds: Number.isFinite(normalized.retryAfterSeconds) && normalized.retryAfterSeconds > 0
+          ? normalized.retryAfterSeconds
+          : 15 * 60,
+      });
+    }
   }
 
   showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
@@ -948,35 +962,55 @@ async function checkRateLimitGate() {
       return { rateLimited: false, checked: false };
     }
 
-    if (data.rateLimited) {
-      const normalized = normalizeRateLimitInfo(data);
-      lastRateLimitInfo = normalized;
+    const normalized = normalizeRateLimitInfo(data);
+
+    if (normalized.rateLimited) {
       startRateLimitCountdown(normalized);
       return {
         rateLimited: true,
         checked: true,
-        ...normalized,
+        remaining: normalized.remaining,
+        retryAfterSeconds: normalized.retryAfterSeconds,
+        lockoutResetAt: normalized.lockoutResetAt,
+        requestWindowResetAt: normalized.requestWindowResetAt,
+      };
+    }
+
+    if (persisted) {
+      startRateLimitCountdown(persisted);
+      return {
+        rateLimited: true,
+        checked: true,
+        remaining: 0,
+        retryAfterSeconds: persisted.retryAfterSeconds,
+        lockoutResetAt: persisted.lockoutResetAt,
+        requestWindowResetAt: normalized.requestWindowResetAt ?? null,
       };
     }
 
     clearPersistedRateLimitState();
 
-    const remainingValue = Number(data.remaining);
-    const retryAfterValue = Number(data.retryAfterSeconds);
-    const resetAtValue = Number(data.resetAt);
-
     return {
       rateLimited: false,
       checked: true,
-      remaining: Number.isFinite(remainingValue) ? remainingValue : null,
-      retryAfterSeconds: Number.isFinite(retryAfterValue) ? retryAfterValue : 0,
-      resetAt: Number.isFinite(resetAtValue) ? resetAtValue : null,
+      remaining: Number.isFinite(normalized.remaining) ? normalized.remaining : null,
+      retryAfterSeconds: Number.isFinite(normalized.retryAfterSeconds) ? normalized.retryAfterSeconds : 0,
+      lockoutResetAt: null,
+      requestWindowResetAt: normalized.requestWindowResetAt ?? null,
     };
   } catch (error) {
     console.warn('Rate-limit status check failed:', error);
     if (persisted) {
       startRateLimitCountdown(persisted);
-      return { rateLimited: true, checked: false, ...persisted, error };
+      return {
+        rateLimited: true,
+        checked: false,
+        remaining: 0,
+        retryAfterSeconds: persisted.retryAfterSeconds,
+        lockoutResetAt: persisted.lockoutResetAt,
+        requestWindowResetAt: null,
+        error,
+      };
     }
     return { rateLimited: false, checked: false, error };
   }
@@ -1221,6 +1255,8 @@ function resetAll() {
   }
 
   clearRateLimitCountdownState({ hideMessage: true, clearStorage: false });
+  document.title = 'Ichnite';
+    restorePersistedRateLimitCountdown();
   document.title = 'Ichnite';
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
@@ -3003,6 +3039,10 @@ window.addEventListener('online', () => {
   if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval && !currentAbortController) {
     fetchLivePrices();
   }
+});
+
+window.addEventListener('pageshow', () => {
+  restorePersistedRateLimitCountdown();
 });
 
 // ════════════════════════════════════════

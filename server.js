@@ -198,6 +198,85 @@ app.use(cors(corsOptions));
 // 3. Rate limiting — prevent API abuse
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const RATE_LIMIT_LIMIT = 100;
+const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
+
+const activeRateLimitLockouts = new Map();
+
+function getResetAtMillis(resetTime) {
+  if (resetTime instanceof Date) return resetTime.getTime();
+  const value = Number(resetTime);
+  return Number.isFinite(value) ? value : null;
+}
+
+function getSecondsUntil(resetAt) {
+  return Number.isFinite(resetAt)
+    ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
+    : 0;
+}
+
+function purgeExpiredRateLimitLockout(rateLimitKey) {
+  const entry = activeRateLimitLockouts.get(rateLimitKey);
+  if (!entry) return null;
+
+  if (entry.resetAt > Date.now()) return entry;
+
+  if (entry.timer) clearTimeout(entry.timer);
+  activeRateLimitLockouts.delete(rateLimitKey);
+  return null;
+}
+
+function getActiveRateLimitLockout(rateLimitKey) {
+  return purgeExpiredRateLimitLockout(rateLimitKey);
+}
+
+function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIMIT_LOCKOUT_MS) {
+  const existing = purgeExpiredRateLimitLockout(rateLimitKey);
+  const nextResetAt = existing ? Math.max(existing.resetAt, resetAt) : resetAt;
+
+  if (existing?.timer) {
+    clearTimeout(existing.timer);
+  }
+
+  const delayMs = Math.max(0, nextResetAt - Date.now());
+  const timer = setTimeout(() => {
+    const current = activeRateLimitLockouts.get(rateLimitKey);
+    if (current && current.resetAt <= Date.now()) {
+      activeRateLimitLockouts.delete(rateLimitKey);
+    }
+  }, delayMs);
+
+  timer.unref?.();
+
+  const entry = { resetAt: nextResetAt, timer };
+  activeRateLimitLockouts.set(rateLimitKey, entry);
+  return entry;
+}
+
+function buildRateLimitPayload({ rateLimited, remaining, retryAfterSeconds, resetAt, requestWindowResetAt, lockoutResetAt }) {
+  return {
+    rateLimited,
+    remaining,
+    retryAfterSeconds,
+    resetAt,
+    requestWindowResetAt: requestWindowResetAt ?? null,
+    lockoutResetAt: lockoutResetAt ?? null,
+    timeRemaining: `${Math.floor(retryAfterSeconds / 60)}m ${retryAfterSeconds % 60}s`,
+  };
+}
+
+function getRequestWindowSnapshot(rateLimitInfo) {
+  const totalHits = Number(rateLimitInfo?.totalHits ?? 0);
+  const requestWindowResetAt = getResetAtMillis(rateLimitInfo?.resetTime);
+  const remaining = Math.max(0, RATE_LIMIT_LIMIT - totalHits);
+  const retryAfterSeconds = getSecondsUntil(requestWindowResetAt);
+
+  return {
+    totalHits,
+    remaining,
+    requestWindowResetAt,
+    retryAfterSeconds,
+  };
+}
 
 // Shared key helper so the limiter and the status endpoint read the same user bucket.
 function getRateLimitKey(req) {
@@ -218,27 +297,25 @@ const apiLimiter = rateLimit({
   max: RATE_LIMIT_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
-  message: (req) => {
-    // req.rateLimit.resetTime is a Date — the documented, reliable way to
-    // access reset info, rather than guessing from headers.
-    const resetTime = req.rateLimit?.resetTime;
-    const resetAt = resetTime instanceof Date
-      ? resetTime.getTime()
-      : Number(resetTime);
+  handler: (req, res, next, options) => {
+    const rateLimitKey = getRateLimitKey(req);
+    const requestWindowResetAt = getResetAtMillis(req.rateLimit?.resetTime);
+    const lockout = setActiveRateLimitLockout(rateLimitKey);
+    const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
 
-    const secondsLeft = Number.isFinite(resetAt)
-      ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
-      : 0;
+    res.setHeader('Retry-After', String(retryAfterSeconds));
 
-    const minutes = Math.floor(secondsLeft / 60);
-    const seconds = secondsLeft % 60;
-
-    return {
+    return res.status(options.statusCode || 429).json({
       error: 'Too many requests. Please try again later.',
-      timeRemaining: `${minutes}m ${seconds}s`,
-      retryAfterSeconds: secondsLeft,
-      resetAt: Number.isFinite(resetAt) ? resetAt : null,
-    };
+      ...buildRateLimitPayload({
+        rateLimited: true,
+        remaining: 0,
+        retryAfterSeconds,
+        resetAt: lockout.resetAt,
+        requestWindowResetAt,
+        lockoutResetAt: lockout.resetAt,
+      }),
+    });
   },
 });
 
@@ -249,46 +326,78 @@ const apiLimiter = rateLimit({
 app.get('/api/rate-limit-status', async (req, res) => {
   try {
     const rateLimitKey = getRateLimitKey(req);
+    const activeLockout = getActiveRateLimitLockout(rateLimitKey);
     const info = await apiLimiter.getKey(rateLimitKey);
+    const windowSnapshot = getRequestWindowSnapshot(info);
+
+    if (activeLockout) {
+      const retryAfterSeconds = getSecondsUntil(activeLockout.resetAt);
+
+      return res.json({
+        error: null,
+        rateLimited: true,
+        remaining: 0,
+        retryAfterSeconds,
+        resetAt: activeLockout.resetAt,
+        lockoutResetAt: activeLockout.resetAt,
+        requestWindowResetAt: windowSnapshot.requestWindowResetAt,
+      });
+    }
 
     if (!info) {
       return res.json({
+        error: null,
         rateLimited: false,
         remaining: RATE_LIMIT_LIMIT,
         retryAfterSeconds: 0,
         resetAt: null,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
       });
     }
 
-    const totalHits = Number(info.totalHits ?? 0);
-    const remaining = Math.max(0, RATE_LIMIT_LIMIT - totalHits);
-    const resetAt = info.resetTime instanceof Date
-      ? info.resetTime.getTime()
-      : Number(info.resetTime);
+    if (windowSnapshot.remaining <= 0) {
+      const newlyActivatedLockout = setActiveRateLimitLockout(rateLimitKey);
+      const retryAfterSeconds = getSecondsUntil(newlyActivatedLockout.resetAt);
 
-    const retryAfterSeconds = Number.isFinite(resetAt)
-      ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
-      : 0;
+      return res.json({
+        error: null,
+        rateLimited: true,
+        remaining: 0,
+        retryAfterSeconds,
+        resetAt: newlyActivatedLockout.resetAt,
+        lockoutResetAt: newlyActivatedLockout.resetAt,
+        requestWindowResetAt: windowSnapshot.requestWindowResetAt,
+      });
+    }
 
     return res.json({
-      rateLimited: remaining <= 0,
-      remaining,
-      retryAfterSeconds,
-      resetAt: Number.isFinite(resetAt) ? resetAt : null,
+      error: null,
+      rateLimited: false,
+      remaining: windowSnapshot.remaining,
+      retryAfterSeconds: windowSnapshot.retryAfterSeconds,
+      resetAt: windowSnapshot.requestWindowResetAt,
+      lockoutResetAt: null,
+      requestWindowResetAt: windowSnapshot.requestWindowResetAt,
     });
   } catch (error) {
     console.error('Rate-limit status error:', error.message);
     return res.json({
+      error: 'Unable to verify rate limit right now.',
       rateLimited: false,
       remaining: null,
       retryAfterSeconds: 0,
       resetAt: null,
-      error: 'Unable to verify rate limit right now.',
+      lockoutResetAt: null,
+      requestWindowResetAt: null,
     });
   }
 });
 
 app.get('/api/debug/ip', (req, res) => {
+  const rateLimitKey = getRateLimitKey(req);
+  const activeLockout = getActiveRateLimitLockout(rateLimitKey);
+
   res.json({
     reqIp: req.ip,
     reqIps: req.ips,
@@ -296,12 +405,56 @@ app.get('/api/debug/ip', (req, res) => {
     xForwardedFor: req.get('x-forwarded-for') || null,
     xRealIp: req.get('x-real-ip') || null,
     trustProxy: req.app.get('trust proxy'),
-    rateLimitKey: getRateLimitKey(req),
+    rateLimitKey,
+    activeLockoutResetAt: activeLockout?.resetAt ?? null,
+    activeLockoutRemainingSeconds: activeLockout ? getSecondsUntil(activeLockout.resetAt) : 0,
+  });
+});
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/rate-limit-status' || req.path === '/debug/ip') {
+    return next();
+  }
+
+  const rateLimitKey = getRateLimitKey(req);
+  const activeLockout = getActiveRateLimitLockout(rateLimitKey);
+
+  if (!activeLockout) {
+    return next();
+  }
+
+  const retryAfterSeconds = getSecondsUntil(activeLockout.resetAt);
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+
+  return res.status(429).json({
+    error: 'Too many requests. Please try again later.',
+    ...buildRateLimitPayload({
+      rateLimited: true,
+      remaining: 0,
+      retryAfterSeconds,
+      resetAt: activeLockout.resetAt,
+      lockoutResetAt: activeLockout.resetAt,
+      requestWindowResetAt: null,
+    }),
   });
 });
 
 // Apply rate limiter to all /api routes
 app.use('/api', apiLimiter);
+
+app.use('/api', (req, res, next) => {
+  if (req.path === '/rate-limit-status' || req.path === '/debug/ip') {
+    return next();
+  }
+
+  const remaining = Number(req.rateLimit?.remaining);
+  if (Number.isFinite(remaining) && remaining <= 0) {
+    const rateLimitKey = getRateLimitKey(req);
+    setActiveRateLimitLockout(rateLimitKey);
+  }
+
+  return next();
+});
 
 // 4. JSON body parser
 app.use(express.json());
