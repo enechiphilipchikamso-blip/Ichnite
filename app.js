@@ -22,7 +22,7 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
-  TRACE_REQUEST_COST: 6, // sol-price + sol-balance + tokens + nfts + transactions + token-metadata when needed
+  TRACE_REQUEST_COST: 5, // sol-price + sol-balance + tokens + nfts + transactions in the current Trace flow
 });
 
 // ════════════════════════════════════════
@@ -266,6 +266,7 @@ let inputValidTimeout = null;
 let failedFetchCount = 0;
 let lastRateLimitInfo = null;
 let rateLimitedUntil = null;
+let rateLimitStateKind = null;
 let rateLimitTickInterval = null;
 
 
@@ -514,6 +515,7 @@ function readLockoutStateFromStorage(storage) {
 
     const parsed = JSON.parse(raw);
     const lockoutResetAt = Number(parsed?.lockoutResetAt);
+    const lockoutKind = typeof parsed?.lockoutKind === 'string' ? parsed.lockoutKind : null;
 
     if (!Number.isFinite(lockoutResetAt)) {
       storage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
@@ -527,6 +529,7 @@ function readLockoutStateFromStorage(storage) {
 
     return {
       lockoutResetAt,
+      lockoutKind,
       retryAfterSeconds: Math.max(0, Math.ceil((lockoutResetAt - Date.now()) / 1000)),
     };
   } catch {
@@ -547,10 +550,10 @@ function readPersistedRateLimitState() {
   ));
 }
 
-function persistRateLimitState(lockoutResetAt) {
+function persistRateLimitState(lockoutResetAt, lockoutKind = null) {
   try {
     if (!Number.isFinite(lockoutResetAt)) return;
-    const payload = JSON.stringify({ lockoutResetAt });
+    const payload = JSON.stringify({ lockoutResetAt, lockoutKind });
 
     sessionStorage.setItem(LOCKOUT_STATE_STORAGE_KEY, payload);
     localStorage.setItem(LOCKOUT_STATE_STORAGE_KEY, payload);
@@ -559,23 +562,7 @@ function persistRateLimitState(lockoutResetAt) {
   }
 }
 
-function clearPersistedRateLimitState() {
-  try {
-    sessionStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
-    sessionStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
-  } catch {
-    // silent fail
-  }
-
-  try {
-    localStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
-    localStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
-  } catch {
-    // silent fail
-  }
-}
-
-function normalizeLockoutState(info = {}, { useTiming = false, allowFallback = false } = {}) {
+function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {}) {
   const payload = typeof info === 'number'
     ? { rateLimited: true, retryAfterSeconds: info }
     : (info || {});
@@ -585,21 +572,20 @@ function normalizeLockoutState(info = {}, { useTiming = false, allowFallback = f
   const persistedLockoutResetAt =
     persisted?.lockoutResetAt > now ? persisted.lockoutResetAt : null;
 
-  const requestWindowResetAtValue = Number(payload.requestWindowResetAt);
   const lockoutResetAtValue = Number(payload.lockoutResetAt ?? payload.resetAt);
-  const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
+  const requestWindowResetAtValue = Number(payload.requestWindowResetAt);
   const remainingValue = Number(payload.remaining);
 
   let lockoutResetAt = null;
 
-      if (payload.rateLimited && Number.isFinite(lockoutResetAtValue) && lockoutResetAtValue > now) {
+  if (
+    payload.rateLimited &&
+    Number.isFinite(lockoutResetAtValue) &&
+    lockoutResetAtValue > now
+  ) {
     lockoutResetAt = lockoutResetAtValue;
-  } else if (persistedLockoutResetAt) {
+  } else if (payload.rateLimited && persistedLockoutResetAt) {
     lockoutResetAt = persistedLockoutResetAt;
-  } else if (payload.rateLimited && useTiming && Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue > 0) {
-    lockoutResetAt = now + retryAfterSecondsValue * 1000;
-  } else if (payload.rateLimited && useTiming && Number.isFinite(requestWindowResetAtValue) && requestWindowResetAtValue > now) {
-    lockoutResetAt = requestWindowResetAtValue;
   } else if (payload.rateLimited && allowFallback) {
     lockoutResetAt = now + 15 * 60 * 1000;
   }
@@ -609,16 +595,62 @@ function normalizeLockoutState(info = {}, { useTiming = false, allowFallback = f
     remaining: Number.isFinite(remainingValue) ? remainingValue : null,
     requestWindowResetAt: Number.isFinite(requestWindowResetAtValue) ? requestWindowResetAtValue : null,
     lockoutResetAt,
+    lockoutKind: payload.lockoutKind ?? payload.kind ?? persisted?.lockoutKind ?? null,
     retryAfterSeconds: lockoutResetAt
       ? Math.max(0, Math.ceil((lockoutResetAt - now) / 1000))
-      : (Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
-        ? retryAfterSecondsValue
-        : 0),
+      : 0,
   };
+}
+
+function getFreshBudgetLockoutResetAt() {
+  return Date.now() + 15 * 60 * 1000;
+}
+
+function enterServerRateLimitState(info = {}, { allowFallback = false } = {}) {
+  const normalized = normalizeServerRateLimitInfo(info, { allowFallback });
+  if (!normalized.lockoutResetAt) return false;
+
+  startRateLimitCountdown({
+    ...normalized,
+    lockoutKind: normalized.lockoutKind || 'server',
+  });
+  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+  return true;
+}
+
+function enterBudgetLockoutState(lockoutKind, info = {}) {
+  startRateLimitCountdown({
+  rateLimited: true,
+  remaining: Number.isFinite(Number(info.remaining)) ? Number(info.remaining) : null,
+  requestWindowResetAt: Number.isFinite(Number(info.requestWindowResetAt))
+    ? Number(info.requestWindowResetAt)
+    : null,
+  lockoutResetAt: getFreshBudgetLockoutResetAt(),
+  lockoutKind,
+});
+
+  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+  return true;
+}
+
+function enterTraceBudgetLockout(info = {}) {
+  return enterBudgetLockoutState('trace-budget', info);
+}
+
+function enterLiveUpdateBudgetLockout(info = {}) {
+  return enterBudgetLockoutState('live-update-budget', info);
 }
 
 function isTraceBudgetInsufficient(remaining) {
   return Number.isFinite(remaining) && remaining >= 0 && remaining < CONFIG.TRACE_REQUEST_COST;
+}
+
+function getLiveUpdateRequestCost() {
+  return allTokens.length > 0 ? 2 : 1;
+}
+
+function isLiveUpdateBudgetInsufficient(remaining, requiredRequests = getLiveUpdateRequestCost()) {
+  return Number.isFinite(remaining) && remaining >= 0 && remaining < requiredRequests;
 }
 
 function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false } = {}) {
@@ -628,6 +660,7 @@ function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false
   }
 
   rateLimitedUntil = null;
+  rateLimitStateKind = null;
   lastRateLimitInfo = null;
   lastSearchTime = 0;
 
@@ -645,17 +678,21 @@ function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false
 }
 
 function startRateLimitCountdown(info = {}) {
-  const normalized = normalizeRateLimitInfo(info, { useTiming: true });
+  const normalized = normalizeServerRateLimitInfo(info, { allowFallback: false });
   const lockoutResetAt = Number(normalized.lockoutResetAt);
   const msgEl = document.getElementById('rateLimitMsg');
   if (!msgEl || !Number.isFinite(lockoutResetAt)) return;
 
-  const sameActiveLockout =
-    Number.isFinite(rateLimitedUntil) &&
-    Math.abs(rateLimitedUntil - lockoutResetAt) < 1000 &&
-    rateLimitTickInterval;
+  const now = Date.now();
+  if (lockoutResetAt <= now) {
+    clearRateLimitCountdownState({ clearStorage: true });
+    return;
+  }
 
-  if (sameActiveLockout) {
+  const currentUntil = Number(rateLimitedUntil);
+  const currentActive = Number.isFinite(currentUntil) && currentUntil > now;
+
+  if (currentActive && currentUntil >= lockoutResetAt && rateLimitTickInterval) {
     searchBtn.disabled = true;
     searchBtn.classList.remove('loading');
     searchBtn.innerHTML = 'Trace';
@@ -669,10 +706,11 @@ function startRateLimitCountdown(info = {}) {
   }
 
   rateLimitedUntil = lockoutResetAt;
+  rateLimitStateKind = normalized.lockoutKind || null;
   lastRateLimitInfo = normalized;
   lastSearchTime = 0;
 
-  persistRateLimitState(lockoutResetAt);
+  persistRateLimitState(lockoutResetAt, rateLimitStateKind);
 
   searchBtn.disabled = true;
   searchBtn.classList.remove('loading');
@@ -905,43 +943,7 @@ function normalizeRateLimitInfo(info = {}, options = {}) {
   return normalizeLockoutState(info, options);
 }
 
-function enterRateLimitState(info = {}, { useTiming = true, allowFallback = false } = {}) {
-  const normalized = normalizeRateLimitInfo(
-    {
-      ...info,
-      rateLimited: true,
-    },
-    { useTiming, allowFallback }
-  );
-
-  const currentUntil = Number(rateLimitedUntil);
-  const normalizedResetAt = Number(normalized.lockoutResetAt);
-
-  if (
-    Number.isFinite(currentUntil) &&
-    Number.isFinite(normalizedResetAt) &&
-    normalizedResetAt <= currentUntil
-  ) {
-    normalized.lockoutResetAt = currentUntil;
-    normalized.retryAfterSeconds = Math.max(0, Math.ceil((currentUntil - Date.now()) / 1000));
-  }
-
-      if (!normalized.lockoutResetAt) {
-    if (!allowFallback) return false;
-
-    startRateLimitCountdown({
-      rateLimited: true,
-      retryAfterSeconds: 15 * 60,
-    });
-  } else {
-    startRateLimitCountdown(normalized);
-  }
-
-  startRateLimitCountdown(normalized);
-
-  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
-  return true;
-}
+// Remove the duplicate old enterRateLimitState block entirely //
 
 async function checkRateLimitGate() {
   const persisted = readPersistedRateLimitState();
@@ -1001,7 +1003,7 @@ async function checkRateLimitGate() {
       };
     }
 
-    const normalized = normalizeRateLimitInfo(data, { useTiming: true });
+    const normalized = normalizeServerRateLimitInfo(data, { allowFallback: false });
 
     if (normalized.lockoutResetAt) {
       startRateLimitCountdown(normalized);
@@ -1096,9 +1098,9 @@ function showError(type, customMessage) {
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
-    if (response.status === 429) {
+      if (response.status === 429) {
     const body = await response.json().catch(() => ({}));
-    enterRateLimitState(body, { allowFallback: true });
+    enterServerRateLimitState(body, { allowFallback: true });
     throw { type: 'ratelimit' };
   }
 
@@ -1393,18 +1395,31 @@ async function handleSearch() {
 
   setSearchLoading(true);
 
-          const rateLimitCheck = await checkRateLimitGate();
+            setSearchLoading(true);
+
+  const rateLimitCheck = await checkRateLimitGate();
   const remainingBudget = Number(rateLimitCheck.remaining);
+
+  if (rateLimitCheck.rateLimited) {
+    setSearchLoading(false);
+    currentAbortController = null;
+    if (!enterServerRateLimitState(rateLimitCheck, { allowFallback: true })) {
+      return;
+    }
+    return;
+  }
+
   const insufficientTraceBudget =
     rateLimitCheck.checked &&
     isTraceBudgetInsufficient(remainingBudget);
 
-  if (rateLimitCheck.rateLimited || insufficientTraceBudget) {
+  if (insufficientTraceBudget) {
     setSearchLoading(false);
     currentAbortController = null;
-    if (!enterRateLimitState(rateLimitCheck, { useTiming: true, allowFallback: false })) {
-  return;
-}
+    enterTraceBudgetLockout({
+      remaining: remainingBudget,
+      requestWindowResetAt: rateLimitCheck.requestWindowResetAt,
+    });
     return;
   }
 
@@ -1509,11 +1524,11 @@ async function fetchSolBalance(address) {
   const priceResponse = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
-    if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
+      if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429
       ? await priceResponse.json().catch(() => ({}))
       : await balanceResponse.json().catch(() => ({}));
-    enterRateLimitState(rateLimitBody, { allowFallback: true });
+    enterServerRateLimitState(rateLimitBody, { allowFallback: true });
     return;
   }
 
@@ -2867,6 +2882,23 @@ async function fetchLivePrices() {
   const { signal } = liveUpdateAbortController;
   const walletSnapshot = currentWalletAddress;
 
+  const rateLimitCheck = await checkRateLimitGate();
+  const remainingBudget = Number(rateLimitCheck.remaining);
+  const liveUpdateCost = getLiveUpdateRequestCost();
+
+  if (rateLimitCheck.rateLimited) {
+    enterServerRateLimitState(rateLimitCheck, { allowFallback: true });
+    return;
+  }
+
+  if (rateLimitCheck.checked && isLiveUpdateBudgetInsufficient(remainingBudget, liveUpdateCost)) {
+    enterLiveUpdateBudgetLockout({
+      remaining: remainingBudget,
+      requestWindowResetAt: rateLimitCheck.requestWindowResetAt,
+    });
+    return;
+  }
+
   try {
     const res = await fetch(`${API_BASE}/api/sol-price`, {
       signal,
@@ -2875,9 +2907,9 @@ async function fetchLivePrices() {
 
     if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-        if (res.status === 429) {
+    if (res.status === 429) {
       const body = await res.json().catch(() => ({}));
-      enterRateLimitState(body, { allowFallback: true });
+      enterServerRateLimitState(body, { allowFallback: true });
       return;
     }
 
@@ -2926,9 +2958,9 @@ async function fetchLivePrices() {
 
       if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-            if (priceRes.status === 429) {
+                  if (priceRes.status === 429) {
         const body = await priceRes.json().catch(() => ({}));
-        enterRateLimitState(body, { allowFallback: true });
+        enterServerRateLimitState(body, { allowFallback: true });
         return;
       }
 
