@@ -760,19 +760,6 @@ function restorePersistedRateLimitCountdown() {
   }
 }
 
-function enterRateLimitState(info = {}) {
-  const normalized = normalizeRateLimitInfo(info);
-  const currentUntil = Number(rateLimitedUntil);
-
-  if (Number.isFinite(currentUntil) && normalized.resetAt <= currentUntil) {
-    normalized.resetAt = currentUntil;
-    normalized.retryAfterSeconds = Math.max(0, Math.ceil((currentUntil - Date.now()) / 1000));
-  }
-
-  startRateLimitCountdown(normalized);
-  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
-}
-
 function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
   hideAllMessages();
 
@@ -954,12 +941,6 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
     hide(last7txList);
   }
 }
-
-function normalizeRateLimitInfo(info = {}, { allowFallback = false } = {}) {
-  return normalizeServerRateLimitInfo(info, { allowFallback });
-}
-
-// Removed the duplicate old enterRateLimitState block entirely //
 
 async function checkRateLimitGate() {
   const persisted = readPersistedRateLimitState();
@@ -1241,7 +1222,7 @@ function showAllSkeletons() {
   hide(document.getElementById('tokenScrollFade'));
   hiddenTokenIds.clear();
   removePieHiddenIndicators();
-  document.getElementById('pieLegendCustom')?.replaceChildren();;
+  document.getElementById('pieLegendCustom')?.replaceChildren();
   show(pieSkeleton);
   hide(pieSpinner);
   hide(pieChart);
@@ -1323,7 +1304,6 @@ function resetAll() {
   clearRateLimitCountdownState({ hideMessage: true, clearStorage: false });
   document.title = 'Ichnite';
     restorePersistedRateLimitCountdown();
-  document.title = 'Ichnite';
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
     btn.style.transform = '';
@@ -1411,8 +1391,6 @@ async function handleSearch() {
 
   setSearchLoading(true);
 
-            setSearchLoading(true);
-
   const rateLimitCheck = await checkRateLimitGate();
   const remainingBudget = Number(rateLimitCheck.remaining);
 
@@ -1454,7 +1432,7 @@ async function handleSearch() {
   if (tokenSearch) tokenSearch.value = '';
 
   /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
-  document.title = 'Ichnite - Wallet Results..';
+  document.title = `Wallet Results - ${currentWalletAddress}`;
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
   show(clearBtn);
@@ -1707,34 +1685,6 @@ async function fetchTokens(address) {
     tokenList.replaceChildren(msg);
   }
 }
-
-async function fetchTokenPrices(tokens) {
-  let priceFetchSucceeded = false;
-  try {
-    // Only send tokens with a verified CoinGecko ID — never guess.
-    // Unknown tokens simply show $0.00 rather than risking a 400 for everyone.
-    const ids = tokens
-      .map(t => getCoinGeckoId(t.symbol))
-      .filter(Boolean);
-
-    const allIds = [...new Set(ids)].join(',');
-    if (!allIds) return;
-
-    const res = await fetch(`${API_BASE}/api/token-prices?ids=${encodeURIComponent(allIds)}`, 
-      {  signal: currentAbortController?.signal,  }
-    );
-    if (!res.ok) throw new Error('Price API error');
-    tokenPrices = await res.json();
-    const data = await res.json();
-tokenPrices = data && typeof data === 'object' ? data : {};
-    priceFetchSucceeded = true;
-  } catch (error) {
-    if (error.name === 'AbortError') return false;
-    console.warn('Token prices unavailable, keeping last known prices:', error);
-    // Do NOT wipe tokenPrices — keep last known good values instead of resetting to $0.00
-      }
-      return priceFetchSucceeded;
-    }
 
 function getTokenUsdValue(token) {
   if (token.priceUnavailable || token.priceUsd === null || token.priceUsd === undefined) return 0;
