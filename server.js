@@ -387,7 +387,20 @@ app.get('/api/rate-limit-status', async (req, res) => {
       });
     }
 
-    // removed something here 1 window snapshot//
+    if (windowSnapshot.remaining <= 0) {
+  const newlyActivatedLockout = setActiveRateLimitLockout(rateLimitKey);
+  const retryAfterSeconds = getSecondsUntil(newlyActivatedLockout.resetAt);
+
+  return res.json({
+    error: null,
+    rateLimited: true,
+    remaining: 0,
+    retryAfterSeconds,
+    resetAt: newlyActivatedLockout.resetAt,
+    lockoutResetAt: newlyActivatedLockout.resetAt,
+    requestWindowResetAt: windowSnapshot.requestWindowResetAt,
+  });
+}
 
     return res.json({
       error: null,
@@ -460,7 +473,19 @@ app.use('/api', (req, res, next) => {
 // Apply rate limiter to all /api routes
 app.use('/api', apiLimiter);
 
-// removed something here 2 api  //
+app.use('/api', (req, res, next) => {
+  if (req.path === '/rate-limit-status' || req.path === '/debug/ip') {
+    return next();
+  }
+
+  const remaining = Number(req.rateLimit?.remaining);
+if (Number.isFinite(remaining) && remaining <= 0) {
+  const rateLimitKey = getRateLimitKey(req);
+  setActiveRateLimitLockout(rateLimitKey);
+}
+
+  return next();
+});
 
 // 4. JSON body parser
 app.use(express.json());
