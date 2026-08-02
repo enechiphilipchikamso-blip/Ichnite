@@ -562,6 +562,22 @@ function persistRateLimitState(lockoutResetAt, lockoutKind = null) {
   }
 }
 
+function clearPersistedRateLimitState() {
+  try {
+    sessionStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+    sessionStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
+  } catch {
+    // silent fail
+  }
+
+  try {
+    localStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
+  } catch {
+    // silent fail
+  }
+}
+
 function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {}) {
   const payload = typeof info === 'number'
     ? { rateLimited: true, retryAfterSeconds: info }
@@ -939,8 +955,8 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   }
 }
 
-function normalizeRateLimitInfo(info = {}, options = {}) {
-  return normalizeLockoutState(info, options);
+function normalizeRateLimitInfo(info = {}, { allowFallback = false } = {}) {
+  return normalizeServerRateLimitInfo(info, { allowFallback });
 }
 
 // Remove the duplicate old enterRateLimitState block entirely //
