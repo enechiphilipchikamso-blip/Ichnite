@@ -528,9 +528,9 @@ function readLockoutStateFromStorage(storage) {
     }
 
     return {
+      rateLimited: true,
       lockoutResetAt,
       lockoutKind,
-      retryAfterSeconds: Math.max(0, Math.ceil((lockoutResetAt - Date.now()) / 1000)),
     };
   } catch {
     return null;
@@ -959,7 +959,7 @@ function normalizeRateLimitInfo(info = {}, { allowFallback = false } = {}) {
   return normalizeServerRateLimitInfo(info, { allowFallback });
 }
 
-// Remove the duplicate old enterRateLimitState block entirely //
+// Removed the duplicate old enterRateLimitState block entirely //
 
 async function checkRateLimitGate() {
   const persisted = readPersistedRateLimitState();
