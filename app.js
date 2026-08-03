@@ -329,6 +329,7 @@ const barChart = document.getElementById('barChart');
 const last7txList = document.getElementById('last7txList');
 const txSkeleton = document.getElementById('txSkeleton');
 const solscanLink = document.getElementById('solscanLink');
+const seemore = document.getElementById('seemore');
 const accordionBtns = document.querySelectorAll('.accordion-btn');
 const infoAccordions = document.querySelectorAll('.accordion.full-width');
 
@@ -937,8 +938,12 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   last7txList.replaceChildren(txMsg);
   if (showResults) {
     show(last7txList);
+    hide(solscanLink);
+    hide(seemore);
   } else {
     hide(last7txList);
+    hide(solscanLink);
+    hide(seemore);
   }
 }
 
@@ -1236,6 +1241,8 @@ function showAllSkeletons() {
   hide(barChart);
   show(txSkeleton);
   hide(last7txList);
+  hide(solscanLink);
+  hide(seemore);
 }
 
 function hideSkeletonShowContent(skeletonEl, ...contentEls) {
@@ -2385,6 +2392,8 @@ async function fetchTransactions(address) {
     barErrorMsg.textContent = 'Unable to load wallet activity chart';
     barChart.closest('.chart-scroll-wrapper')?.appendChild(barErrorMsg);
     hideSkeletonShowContent(txSkeleton, last7txList);
+    hide(solscanLink);
+    hide(seemore);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load transactions';
@@ -2481,6 +2490,8 @@ async function renderRecentTransactions(transactions, options = {}) {
 
   if (safeTransactions.length === 0) {
     hideSkeletonShowContent(txSkeleton, last7txList);
+    hide(solscanLink);
+    hide(seemore);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
     msg.textContent = 'This wallet has no transactions yet';
@@ -2540,6 +2551,8 @@ async function renderRecentTransactions(transactions, options = {}) {
 
   last7txList.replaceChildren(fragment);
   hideSkeletonShowContent(txSkeleton, last7txList);
+  show(solscanLink);
+  show(seemore);
   if (!barCardRevealed) {
     revealCard(last7txList.closest('.card'));
     barCardRevealed = true;

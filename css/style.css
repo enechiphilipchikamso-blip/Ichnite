@@ -823,7 +823,8 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 /* ── X Icon ── */
-.x-link {
+/*
+ .x-link {
   color: #4a4a4a;
   font-size: 1.3rem;
   text-decoration: none;
@@ -835,7 +836,8 @@ grid-template-columns: repeat(4, 1fr);
 
 .x-link:active {
   opacity: 0.7;
-}
+} 
+*/
 
 /* ── Small Tablet and Large Phone ── */
 @media only screen and (min-width: 600px) {
@@ -1795,38 +1797,3 @@ grid-template-columns: repeat(4, 1fr);
   font-family: 'Space Grotesk', sans-serif;
   font-size:0.75rem;
 }
-
-/*
-#floatingLogosContainer {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.floating-bg-logo {
-  position: fixed;
-  width: 48px;
-  height: 48px;
-  opacity: 0.08;
-  pointer-events: none;
-  z-index: 0;
-  top: var(--logo-top, 15%);
-  left: var(--logo-left, 50%);
-  animation: floatLogo var(--logo-duration, 8s) ease-in-out infinite;
-  animation-delay: var(--logo-delay, 0s);
-  will-change: transform;
-}
-
-@keyframes floatLogo {
-  0%, 100% { transform: translate(-50%, 0) rotate(0deg); }
-  50% { transform: translate(-50%, -30px) rotate(8deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .floating-bg-logo {
-    animation: none;
-  }
-}
-*/
