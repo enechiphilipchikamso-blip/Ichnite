@@ -348,6 +348,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
         resetAt: activeLockout.resetAt,
         lockoutResetAt: activeLockout.resetAt,
         requestWindowResetAt: null,
+        serverTime: Date.now(),
       });
     }
 
@@ -362,6 +363,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
         resetAt: null,
         lockoutResetAt: null,
         requestWindowResetAt: null,
+        serverTime: Date.now(),
       });
     }
 
@@ -376,6 +378,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
     resetAt: null,
     lockoutResetAt: null,
     requestWindowResetAt: null,
+    serverTime: Date.now(),
   });
 }
 
@@ -389,6 +392,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
       resetAt: windowSnapshot.requestWindowResetAt,
       lockoutResetAt: null,
       requestWindowResetAt: windowSnapshot.requestWindowResetAt,
+      serverTime: Date.now(),
     });
   } catch (error) {
     console.error('Rate-limit status error:', error.message);
@@ -400,6 +404,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
       resetAt: null,
       lockoutResetAt: null,
       requestWindowResetAt: null,
+      serverTime: Date.now(),
     });
   }
 });
@@ -418,6 +423,8 @@ app.get('/api/debug/ip', (req, res) => {
     rateLimitKey,
     activeLockoutResetAt: activeLockout?.resetAt ?? null,
     activeLockoutRemainingSeconds: activeLockout ? getSecondsUntil(activeLockout.resetAt) : 0,
+    serverTime: Date.now(),
+    serverTimeIso: new Date().toISOString(),
   });
 });
 

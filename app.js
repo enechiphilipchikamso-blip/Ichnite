@@ -1006,6 +1006,14 @@ async function checkRateLimitGate() {
     }
 
     const normalized = normalizeServerRateLimitInfo(data, { allowFallback: false });
+    
+    if (Number.isFinite(data.serverTime)) {
+      const skewMs = Date.now() - data.serverTime;
+      console.log(
+        `⏱ Clock skew (browser - server): ${skewMs}ms (${(skewMs / 1000).toFixed(1)}s). ` +
+        `Positive = browser clock is AHEAD of server.`
+      );
+    }
 
     if (normalized.lockoutResetAt) {
       startRateLimitCountdown(normalized);
