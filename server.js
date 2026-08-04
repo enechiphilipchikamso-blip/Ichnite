@@ -1085,6 +1085,48 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
+// ── Route 6 — GET /api/wallet-age?address= ──
+// Dedicated, lightweight lookup for the wallet's true first-ever transaction.
+// Helius supports fetching the single oldest transaction directly via
+// sort-order=asc&limit=1 — one cheap request, not a pagination walk through
+// however many pages the wallet's real history spans.
+app.get('/api/wallet-age', async (req, res) => {
+  const { address } = req.query;
+
+  if (!isValidSolanaAddress(address)) {
+    return res.status(400).json({ error: 'Invalid Solana wallet address.' });
+  }
+
+  try {
+    if (HELIUS_API_KEY) {
+      const data = await safeFetch(
+        `https://api-mainnet.helius-rpc.com/v0/addresses/${address.trim()}/transactions?api-key=${HELIUS_API_KEY}&limit=1&sort-order=asc`
+      );
+
+      const firstTx = Array.isArray(data) ? data[0] : null;
+      const rawTimestamp = firstTx?.timestamp ?? firstTx?.blockTime ?? null;
+      const firstTransactionTimestamp = Number.isFinite(Number(rawTimestamp)) ? Number(rawTimestamp) : null;
+
+      return res.json({ firstTransactionTimestamp });
+    } else if (SHYFT_API_KEY) {
+      // Shyft (fallback provider) only supports newest-first pagination
+      // (before_tx_signature) — there's no equivalent cheap "oldest
+      // transaction" lookup, so age is reported unavailable rather than
+      // guessing at a parameter Shyft doesn't document or support.
+      return res.json({ firstTransactionTimestamp: null });
+    } else {
+      return res.status(503).json({
+        error: 'No API key configured. Please add HELIUS_API_KEY to .env',
+      });
+    }
+  } catch (error) {
+    console.error('Wallet age error:', error.message);
+    res.status(503).json({
+      error: 'Unable to fetch wallet age. Solana network may be experiencing delays.',
+    });
+  }
+});
+
 // ════════════════════════════════════════
 // ── STATIC FILES ──
 // Serve index.html and all frontend files

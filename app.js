@@ -22,11 +22,14 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
-  TRACE_REQUEST_COST: 5, // sol-price + sol-balance + tokens + nfts + transactions — the guaranteed base cost
+  // sol-price + sol-balance + tokens + nfts + transactions + wallet-age — the guaranteed base
+  // cost. wallet-age is its own dedicated, always-made call (see fetchWalletAge) rather than
+  // being derived from the transactions list, so it's counted here like any other guaranteed call.
+  TRACE_REQUEST_COST: 6,
   // Transaction rendering conditionally adds one more call (/api/token-metadata) when the
   // fetched transactions contain token transfers — this can't be known until fetchTransactions
   // has already returned data, so the pre-flight budget check must reserve for the worst case.
-  TRACE_REQUEST_COST_MAX: 6,
+  TRACE_REQUEST_COST_MAX: 7,
 });
 
 // ════════════════════════════════════════
@@ -435,11 +438,15 @@ function formatTxDate(timestamp) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function calculateWalletAge(transactions) {
-  if (!transactions || transactions.length === 0) return null;
-  const timestamps = transactions.map(tx => tx.timestamp || tx.blockTime).filter(Boolean);
-  if (timestamps.length === 0) return null;
-  const oldest = Math.min(...timestamps);
+// Formats wallet age from the single genesis timestamp returned by the
+// dedicated /api/wallet-age endpoint. Deliberately NOT derived from the
+// transactions list (allTransactions) — that list is capped at the most
+// recent 100 entries, so for an active wallet its oldest entry is almost
+// never the wallet's true first transaction (see fetchWalletAge).
+function formatWalletAge(firstTransactionTimestamp) {
+  if (firstTransactionTimestamp == null) return null;
+  const oldest = Number(firstTransactionTimestamp);
+  if (!Number.isFinite(oldest) || oldest <= 0) return null;
   const diffDays = Math.floor((Date.now() / 1000 - oldest) / 86400);
   const years = Math.floor(diffDays / 365);
   const months = Math.floor((diffDays % 365) / 30);
@@ -1383,8 +1390,8 @@ async function handleSearch() {
   setSearchLoading(true);
 
   // Cost is passed to the backend so it can authoritatively decide whether the
-  // remaining budget covers a full Trace search. Reserve the worst case (6, not
-  // the base 5) because whether transaction rendering needs the extra
+  // remaining budget covers a full Trace search. Reserve the worst case (7, not
+  // the base 6) because whether transaction rendering needs the extra
   // token-metadata call can't be known until after fetchTransactions returns —
   // the pre-flight check must never be able to admit a search it can't finish.
   const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
@@ -1451,6 +1458,7 @@ async function handleSearch() {
       fetchTokens(currentWalletAddress),
       fetchNFTs(currentWalletAddress),
       fetchTransactions(currentWalletAddress),
+      fetchWalletAge(currentWalletAddress),
     ]);
 
     if (!rateLimitedUntil) {
@@ -2321,15 +2329,8 @@ async function fetchTransactions(address) {
     if (signal?.aborted || rateLimitedUntil) return;
 
     allTransactions = data.transactions || [];
-    const age = calculateWalletAge(allTransactions);
 
     if (signal?.aborted || rateLimitedUntil) return;
-
-    if (age) {
-      walletAgeEl.textContent = age;
-      solAgeFailed = false;
-      show(document.getElementById('walletAgeRow'));
-    }
 
     if (allTransactions.length === 0) {
       barDataAvailable = false;
@@ -2351,9 +2352,6 @@ async function fetchTransactions(address) {
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
-    solAgeFailed = true;
-    walletAgeEl.textContent = 'Age unavailable';
-    show(document.getElementById('walletAgeRow'));
     barDataAvailable = false;
     failedFetchCount++;
     console.error('Transaction error:', error);
@@ -2372,6 +2370,40 @@ async function fetchTransactions(address) {
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load transactions';
     last7txList.replaceChildren(msg);
+  }
+}
+
+// Dedicated, lightweight call for wallet age — decoupled from fetchTransactions
+// on purpose (see formatWalletAge). Uses the same handleResponse/abort/lockout
+// pattern as every other fetch here, so a 429 from this call is handled by the
+// single existing enterServerRateLimitState path — it cannot create a second
+// lockout or bypass the budget/lockout architecture.
+async function fetchWalletAge(address) {
+  const signal = currentAbortController?.signal;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/wallet-age?address=${address}`, { signal });
+    const data = await handleResponse(res);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    const age = formatWalletAge(data.firstTransactionTimestamp);
+
+    if (age) {
+      walletAgeEl.textContent = age;
+      solAgeFailed = false;
+    } else {
+      walletAgeEl.textContent = 'Age unavailable';
+      solAgeFailed = true;
+    }
+    show(document.getElementById('walletAgeRow'));
+  } catch (error) {
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
+
+    solAgeFailed = true;
+    walletAgeEl.textContent = 'Age unavailable';
+    show(document.getElementById('walletAgeRow'));
+    console.error('Wallet age error:', error);
   }
 }
 
