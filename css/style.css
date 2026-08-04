@@ -1741,7 +1741,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 #pieAllHiddenMsg {
-  background-color: #1a1a2e;
+  background-color: #12121a;
   border: 1px solid #7c5cfc;
   border-radius: 12px;
   color: #7c5cfc;
