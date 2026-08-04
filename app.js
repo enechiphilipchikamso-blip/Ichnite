@@ -22,7 +22,11 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
-  TRACE_REQUEST_COST: 5, // sol-price + sol-balance + tokens + nfts + transactions in the current Trace flow
+  TRACE_REQUEST_COST: 5, // sol-price + sol-balance + tokens + nfts + transactions — the guaranteed base cost
+  // Transaction rendering conditionally adds one more call (/api/token-metadata) when the
+  // fetched transactions contain token transfers — this can't be known until fetchTransactions
+  // has already returned data, so the pre-flight budget check must reserve for the worst case.
+  TRACE_REQUEST_COST_MAX: 6,
 });
 
 // ════════════════════════════════════════
@@ -589,7 +593,11 @@ function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {})
   const persistedLockoutResetAt =
     persisted?.lockoutResetAt > now ? persisted.lockoutResetAt : null;
 
-  const lockoutResetAtValue = Number(payload.lockoutResetAt ?? payload.resetAt);
+  // Only an explicit lockoutResetAt may define the lockout expiration. A
+  // generic resetAt can represent the normal request-window reset instead
+  // (see server.js), and must never be silently reinterpreted as the
+  // separate 15-minute lockout.
+  const lockoutResetAtValue = Number(payload.lockoutResetAt);
   const requestWindowResetAtValue = Number(payload.requestWindowResetAt);
   const remainingValue = Number(payload.remaining);
 
@@ -619,10 +627,6 @@ function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {})
   };
 }
 
-function getFreshBudgetLockoutResetAt() {
-  return Date.now() + 15 * 60 * 1000;
-}
-
 function enterServerRateLimitState(info = {}, { allowFallback = false } = {}) {
   const normalized = normalizeServerRateLimitInfo(info, { allowFallback });
   if (!normalized.lockoutResetAt) return false;
@@ -635,39 +639,8 @@ function enterServerRateLimitState(info = {}, { allowFallback = false } = {}) {
   return true;
 }
 
-function enterBudgetLockoutState(lockoutKind, info = {}) {
-  startRateLimitCountdown({
-  rateLimited: true,
-  remaining: Number.isFinite(Number(info.remaining)) ? Number(info.remaining) : null,
-  requestWindowResetAt: Number.isFinite(Number(info.requestWindowResetAt))
-    ? Number(info.requestWindowResetAt)
-    : null,
-  lockoutResetAt: getFreshBudgetLockoutResetAt(),
-  lockoutKind,
-});
-
-  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
-  return true;
-}
-
-function enterTraceBudgetLockout(info = {}) {
-  return enterBudgetLockoutState('trace-budget', info);
-}
-
-function enterLiveUpdateBudgetLockout(info = {}) {
-  return enterBudgetLockoutState('live-update-budget', info);
-}
-
-function isTraceBudgetInsufficient(remaining) {
-  return Number.isFinite(remaining) && remaining >= 0 && remaining < CONFIG.TRACE_REQUEST_COST;
-}
-
 function getLiveUpdateRequestCost() {
   return allTokens.length > 0 ? 2 : 1;
-}
-
-function isLiveUpdateBudgetInsufficient(remaining, requiredRequests = getLiveUpdateRequestCost()) {
-  return Number.isFinite(remaining) && remaining >= 0 && remaining < requiredRequests;
 }
 
 function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false } = {}) {
@@ -947,11 +920,14 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   }
 }
 
-async function checkRateLimitGate() {
+async function checkRateLimitGate(operationCost = null) {
   const persisted = readPersistedRateLimitState();
 
   try {
-    const res = await fetch(`${API_BASE}/api/rate-limit-status`, {
+    const costQuery = Number.isFinite(operationCost) && operationCost > 0
+      ? `?cost=${encodeURIComponent(operationCost)}`
+      : '';
+    const res = await fetch(`${API_BASE}/api/rate-limit-status${costQuery}`, {
       cache: 'no-store',
     });
 
@@ -1406,8 +1382,12 @@ async function handleSearch() {
 
   setSearchLoading(true);
 
-  const rateLimitCheck = await checkRateLimitGate();
-  const remainingBudget = Number(rateLimitCheck.remaining);
+  // Cost is passed to the backend so it can authoritatively decide whether the
+  // remaining budget covers a full Trace search. Reserve the worst case (6, not
+  // the base 5) because whether transaction rendering needs the extra
+  // token-metadata call can't be known until after fetchTransactions returns —
+  // the pre-flight check must never be able to admit a search it can't finish.
+  const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
 
   if (rateLimitCheck.rateLimited) {
     setSearchLoading(false);
@@ -1415,20 +1395,6 @@ async function handleSearch() {
     if (!enterServerRateLimitState(rateLimitCheck, { allowFallback: true })) {
       return;
     }
-    return;
-  }
-
-  const insufficientTraceBudget =
-    rateLimitCheck.checked &&
-    isTraceBudgetInsufficient(remainingBudget);
-
-  if (insufficientTraceBudget) {
-    setSearchLoading(false);
-    currentAbortController = null;
-    enterTraceBudgetLockout({
-      remaining: remainingBudget,
-      requestWindowResetAt: rateLimitCheck.requestWindowResetAt,
-    });
     return;
   }
 
@@ -2869,20 +2835,13 @@ async function fetchLivePrices() {
   const { signal } = liveUpdateAbortController;
   const walletSnapshot = currentWalletAddress;
 
-  const rateLimitCheck = await checkRateLimitGate();
-  const remainingBudget = Number(rateLimitCheck.remaining);
   const liveUpdateCost = getLiveUpdateRequestCost();
+  // Cost is passed to the backend so it can authoritatively decide whether the
+  // remaining budget covers a full live-update cycle — never decided client-side.
+  const rateLimitCheck = await checkRateLimitGate(liveUpdateCost);
 
   if (rateLimitCheck.rateLimited) {
     enterServerRateLimitState(rateLimitCheck, { allowFallback: true });
-    return;
-  }
-
-  if (rateLimitCheck.checked && isLiveUpdateBudgetInsufficient(remainingBudget, liveUpdateCost)) {
-    enterLiveUpdateBudgetLockout({
-      remaining: remainingBudget,
-      requestWindowResetAt: rateLimitCheck.requestWindowResetAt,
-    });
     return;
   }
 

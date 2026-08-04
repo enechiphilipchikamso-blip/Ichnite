@@ -287,6 +287,17 @@ function getRequestWindowSnapshot(rateLimitInfo) {
   };
 }
 
+// Parses/validates the `cost` query param on /api/rate-limit-status — the
+// number of backend requests the caller is about to make (a full Trace
+// search, a live-update cycle, etc.). Returns null for anything malformed,
+// which simply disables the pre-flight check rather than causing a wrong denial.
+function parseOperationCost(rawValue) {
+  if (rawValue == null) return null;
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) return null;
+  return value;
+}
+
 // Shared key helper so the limiter and the status endpoint read the same user bucket.
 function getRateLimitKey(req) {
   const key = req.ip;
@@ -352,6 +363,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
       });
     }
 
+    const operationCost = parseOperationCost(req.query.cost);
     const info = await apiLimiter.getKey(rateLimitKey);
 
     if (!info) {
@@ -382,7 +394,25 @@ app.get('/api/rate-limit-status', async (req, res) => {
   });
 }
 
-    
+    // Backend is the sole authority for the 15-minute lockout. If the caller
+    // told us the cost of the operation it's about to run and the remaining
+    // budget in the current request window can't cover it, establish the
+    // lockout now — the frontend must never invent this timestamp itself.
+    if (operationCost !== null && windowSnapshot.remaining < operationCost) {
+      const lockout = setActiveRateLimitLockout(rateLimitKey);
+      const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
+
+      return res.json({
+        error: null,
+        rateLimited: true,
+        remaining: windowSnapshot.remaining,
+        retryAfterSeconds,
+        resetAt: lockout.resetAt,
+        lockoutResetAt: lockout.resetAt,
+        requestWindowResetAt: windowSnapshot.requestWindowResetAt,
+        serverTime: Date.now(),
+      });
+    }
 
     return res.json({
       error: null,
