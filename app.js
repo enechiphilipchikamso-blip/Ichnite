@@ -1261,6 +1261,20 @@ function setSearchLoading(isLoading) {
 // ── 12. CLEAR / RESET ──
 // ════════════════════════════════════════
 
+function resetBarToggleState() {
+  toggleBtns.forEach(btn => {
+    btn.classList.remove('active');
+    btn.style.transform = '';
+  });
+  document.querySelector('[data-range="days"]')?.classList.add('active');
+  hide(yearDropdown);
+  currentBarRange = 'days';
+  currentYearSelection = 1;
+  yearRangeActive = false;
+  if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
+  yearOptions.forEach(opt => opt.classList.remove('selected'));
+}
+
 function resetAll() {
   // Abort any in-flight requests
   if (currentAbortController) {
@@ -1302,17 +1316,7 @@ function resetAll() {
   clearRateLimitCountdownState({ hideMessage: true, clearStorage: false });
   document.title = 'Ichnite';
     restorePersistedRateLimitCountdown();
-  toggleBtns.forEach(btn => {
-    btn.classList.remove('active');
-    btn.style.transform = '';
-  });
-  document.querySelector('[data-range="days"]')?.classList.add('active');
-  hide(yearDropdown);
-  currentBarRange = 'days';
-  currentYearSelection = 1;
-  yearRangeActive = false;
-  if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
-  yearOptions.forEach(opt => opt.classList.remove('selected'));
+  resetBarToggleState();
   walletInput.focus();
 }
 
@@ -1443,6 +1447,7 @@ async function handleSearch() {
     solFetchFailed = false;
     tokenFetchFailed = false;
     barDataAvailable = false;
+    resetBarToggleState();
     tokenDataAvailable = false;
     netWorthRevealed = false;
     tokenCardRevealed = false;

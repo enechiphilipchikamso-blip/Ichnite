@@ -301,13 +301,19 @@ function parseOperationCost(rawValue) {
 // Shared key helper so the limiter and the status endpoint read the same user bucket.
 function getRateLimitKey(req) {
   const key = req.ip;
+  const activeLockout = getActiveRateLimitLockout(key);
   console.log('🔎 Rate-limit key debug:', {
     key,
     reqIp: req.ip,
     reqIps: req.ips,
     remoteAddress: req.socket.remoteAddress,
     xForwardedFor: req.get('x-forwarded-for') || null,
+    xRealIp: req.get('x-real-ip') || null,
     trustProxy: req.app.get('trust proxy'),
+    activeLockoutResetAt: activeLockout?.resetAt ?? null,
+    activeLockoutRemainingSeconds: activeLockout ? getSecondsUntil(activeLockout.resetAt) : 0,
+    serverTime: Date.now(),
+    serverTimeIso: new Date().toISOString(),
   });
   return key;
 }
@@ -439,27 +445,8 @@ app.get('/api/rate-limit-status', async (req, res) => {
   }
 });
 
-app.get('/api/debug/ip', (req, res) => {
-  const rateLimitKey = getRateLimitKey(req);
-  const activeLockout = getActiveRateLimitLockout(rateLimitKey);
-
-  res.json({
-    reqIp: req.ip,
-    reqIps: req.ips,
-    remoteAddress: req.socket.remoteAddress,
-    xForwardedFor: req.get('x-forwarded-for') || null,
-    xRealIp: req.get('x-real-ip') || null,
-    trustProxy: req.app.get('trust proxy'),
-    rateLimitKey,
-    activeLockoutResetAt: activeLockout?.resetAt ?? null,
-    activeLockoutRemainingSeconds: activeLockout ? getSecondsUntil(activeLockout.resetAt) : 0,
-    serverTime: Date.now(),
-    serverTimeIso: new Date().toISOString(),
-  });
-});
-
 app.use('/api', (req, res, next) => {
-  if (req.path === '/rate-limit-status' || req.path === '/debug/ip') {
+  if (req.path === '/rate-limit-status') {
     return next();
   }
 
