@@ -275,6 +275,7 @@ let lastRateLimitInfo = null;
 let rateLimitedUntil = null;
 let rateLimitStateKind = null;
 let rateLimitTickInterval = null;
+let rateLimitRestoreInFlight = null;
 
 
 // Improvement 1: AbortController — cancel stale requests
@@ -744,6 +745,20 @@ async function restorePersistedRateLimitCountdown() {
   }
 
   await checkRateLimitGate();
+}
+
+async function restorePersistedRateLimitCountdownOnce() {
+  if (!rateLimitRestoreInFlight) {
+    rateLimitRestoreInFlight = (async () => {
+      try {
+        return await restorePersistedRateLimitCountdown();
+      } finally {
+        rateLimitRestoreInFlight = null;
+      }
+    })();
+  }
+
+  return rateLimitRestoreInFlight;
 }
 
 function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
@@ -3138,7 +3153,7 @@ window.addEventListener('online', () => {
 });
 
 window.addEventListener('pageshow', () => {
-  restorePersistedRateLimitCountdown();
+  void restorePersistedRateLimitCountdownOnce();
 });
 
 // ════════════════════════════════════════
@@ -3146,4 +3161,4 @@ window.addEventListener('pageshow', () => {
 // ════════════════════════════════════════
 
 renderSearchHistory();
-restorePersistedRateLimitCountdown();
+void restorePersistedRateLimitCountdownOnce();
