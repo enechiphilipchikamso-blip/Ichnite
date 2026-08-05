@@ -761,6 +761,14 @@ async function restorePersistedRateLimitCountdownOnce() {
   return rateLimitRestoreInFlight;
 }
 
+async function restorePersistedRateLimitCountdownIfNeeded() {
+  const persisted = readPersistedRateLimitState();
+  if (!persisted) return false;
+
+  await restorePersistedRateLimitCountdownOnce();
+  return true;
+}
+
 function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
   hideAllMessages();
 
@@ -1341,7 +1349,7 @@ function resetAll() {
 
   clearRateLimitCountdownState({ hideMessage: true, clearStorage: false });
   document.title = 'Ichnite';
-    restorePersistedRateLimitCountdown();
+    void restorePersistedRateLimitCountdownIfNeeded();
   resetBarToggleState();
   walletInput.focus();
 }
