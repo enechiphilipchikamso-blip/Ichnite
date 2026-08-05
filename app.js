@@ -590,7 +590,12 @@ function clearPersistedRateLimitState() {
   }
 }
 
-function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {}) {
+function hasValidLockoutResetAt(info = {}) {
+  const lockoutResetAt = Number(info?.lockoutResetAt);
+  return Number.isFinite(lockoutResetAt) && lockoutResetAt > Date.now();
+}
+
+function normalizeServerRateLimitInfo(info = {}) {
   const payload = typeof info === 'number'
     ? { rateLimited: true, retryAfterSeconds: info }
     : (info || {});
@@ -618,8 +623,6 @@ function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {})
     lockoutResetAt = lockoutResetAtValue;
   } else if (payload.rateLimited && persistedLockoutResetAt) {
     lockoutResetAt = persistedLockoutResetAt;
-  } else if (payload.rateLimited && allowFallback) {
-    lockoutResetAt = now + 15 * 60 * 1000;
   }
 
   return {
@@ -634,8 +637,8 @@ function normalizeServerRateLimitInfo(info = {}, { allowFallback = false } = {})
   };
 }
 
-function enterServerRateLimitState(info = {}, { allowFallback = false } = {}) {
-  const normalized = normalizeServerRateLimitInfo(info, { allowFallback });
+function enterServerRateLimitState(info = {}) {
+  const normalized = normalizeServerRateLimitInfo(info);
   if (!normalized.lockoutResetAt) return false;
 
   startRateLimitCountdown({
@@ -734,11 +737,13 @@ function startRateLimitCountdown(info = {}) {
   rateLimitTickInterval = setInterval(tick, 1000);
 }
 
-function restorePersistedRateLimitCountdown() {
+async function restorePersistedRateLimitCountdown() {
   const persisted = readPersistedRateLimitState();
   if (persisted) {
     startRateLimitCountdown(persisted);
   }
+
+  await checkRateLimitGate();
 }
 
 function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
@@ -1091,10 +1096,16 @@ function showError(type, customMessage) {
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
-      if (response.status === 429) {
+        if (response.status === 429) {
     const body = await response.json().catch(() => ({}));
-    enterServerRateLimitState(body, { allowFallback: true });
-    throw { type: 'ratelimit' };
+
+    if (hasValidLockoutResetAt(body)) {
+      enterServerRateLimitState(body);
+      throw { type: 'ratelimit' };
+    }
+
+    showError('server');
+    throw { type: 'server' };
   }
 
   if (response.status === 404) throw { type: 'notfound' };
@@ -1403,8 +1414,10 @@ async function handleSearch() {
   if (rateLimitCheck.rateLimited) {
     setSearchLoading(false);
     currentAbortController = null;
-    if (!enterServerRateLimitState(rateLimitCheck, { allowFallback: true })) {
-      return;
+    if (hasValidLockoutResetAt(rateLimitCheck)) {
+      enterServerRateLimitState(rateLimitCheck);
+    } else {
+      showError('server');
     }
     return;
   }
@@ -1512,12 +1525,17 @@ async function fetchSolBalance(address) {
   const priceResponse = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
-      if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
+        if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429
       ? await priceResponse.json().catch(() => ({}))
       : await balanceResponse.json().catch(() => ({}));
-    enterServerRateLimitState(rateLimitBody, { allowFallback: true });
-    return;
+
+    if (hasValidLockoutResetAt(rateLimitBody)) {
+      enterServerRateLimitState(rateLimitBody);
+      return;
+    }
+
+    showError('server');
   }
 
   const priceUnreachable = priceResult.status === 'rejected';
@@ -1662,7 +1680,7 @@ async function fetchTokens(address) {
 
     // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
-    renderTokenList(allTokens);
+    renderTokenList(allTokens, {});
 
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
@@ -1797,8 +1815,8 @@ function renderVisibleTokenRows() {
 }
 
 // Full render — used by initial fetch and live refresh. Updates everything.
-function renderTokenList(options = {}) {
-  updateTokenTotalsAndChart(allTokens, options);
+function renderTokenList(tokens, options = {}) {
+  updateTokenTotalsAndChart(tokens, options);
   renderVisibleTokenRows();
 }
 
@@ -2877,8 +2895,12 @@ async function fetchLivePrices() {
   // remaining budget covers a full live-update cycle — never decided client-side.
   const rateLimitCheck = await checkRateLimitGate(liveUpdateCost);
 
-  if (rateLimitCheck.rateLimited) {
-    enterServerRateLimitState(rateLimitCheck, { allowFallback: true });
+    if (rateLimitCheck.rateLimited) {
+    if (hasValidLockoutResetAt(rateLimitCheck)) {
+      enterServerRateLimitState(rateLimitCheck);
+    } else {
+      showError('server');
+    }
     return;
   }
 
@@ -2890,9 +2912,14 @@ async function fetchLivePrices() {
 
     if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-    if (res.status === 429) {
+        if (res.status === 429) {
       const body = await res.json().catch(() => ({}));
-      enterServerRateLimitState(body, { allowFallback: true });
+      if (hasValidLockoutResetAt(body)) {
+        enterServerRateLimitState(body);
+        return;
+      }
+
+      showError('server');
       return;
     }
 
@@ -2942,10 +2969,16 @@ async function fetchLivePrices() {
       if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
                   if (priceRes.status === 429) {
-        const body = await priceRes.json().catch(() => ({}));
-        enterServerRateLimitState(body, { allowFallback: true });
-        return;
-      }
+  const body = await priceRes.json().catch(() => ({}));
+
+  if (hasValidLockoutResetAt(body)) {
+    enterServerRateLimitState(body);
+    return;
+  }
+
+  showError('server');
+  return;
+}
 
       if (priceRes.ok) {
         const { prices, unpriced } = await priceRes.json();

@@ -12,6 +12,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import fetch from 'node-fetch';
 import net from 'node:net';
+import { Redis } from '@upstash/redis';
 
 // ── Validate required environment variables on startup ──
 const requiredEnvVars = ['HELIUS_API_KEY'];
@@ -33,6 +34,11 @@ requiredEnvVars.forEach((key) => {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL?.trim() || '';
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || '';
+const REDIS_KEY_PREFIX = (process.env.REDIS_KEY_PREFIX || 'ichnite:rate-limit:').trim() || 'ichnite:rate-limit:';
+const REDIS_BACKUP_ENABLED = Boolean(REDIS_URL && REDIS_TOKEN);
+const redis = REDIS_BACKUP_ENABLED ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN }) : null;
 
 function isValidTrustProxyToken(token) {
   const value = token.trim();
@@ -202,6 +208,10 @@ const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
 
 const activeRateLimitLockouts = new Map();
 
+function getRedisRateLimitKey(rateLimitKey) {
+  return `${REDIS_KEY_PREFIX}${rateLimitKey}`;
+}
+
 function getResetAtMillis(resetTime) {
   if (resetTime instanceof Date) return resetTime.getTime();
   const value = Number(resetTime);
@@ -214,6 +224,55 @@ function getSecondsUntil(resetAt) {
     : 0;
 }
 
+async function clearPersistedRateLimitLockout(rateLimitKey) {
+  if (!redis) return;
+
+  try {
+    await redis.del(getRedisRateLimitKey(rateLimitKey));
+  } catch (error) {
+    console.warn('⚠️ Redis lockout delete failed:', error.message);
+  }
+}
+
+async function persistActiveRateLimitLockout(rateLimitKey, resetAt) {
+  if (!redis || !Number.isFinite(resetAt)) return;
+
+  const ttlSeconds = Math.max(0, Math.ceil((resetAt - Date.now()) / 1000));
+  if (ttlSeconds <= 0) {
+    await clearPersistedRateLimitLockout(rateLimitKey);
+    return;
+  }
+
+  try {
+    await redis.set(
+      getRedisRateLimitKey(rateLimitKey),
+      { resetAt },
+      { exat: Math.ceil(resetAt / 1000) }
+    );
+  } catch (error) {
+    console.warn('⚠️ Redis lockout write failed:', error.message);
+  }
+}
+
+async function readPersistedRateLimitLockout(rateLimitKey) {
+  if (!redis) return null;
+
+  try {
+    const stored = await redis.get(getRedisRateLimitKey(rateLimitKey));
+    const resetAt = Number(stored?.resetAt ?? stored?.lockoutResetAt ?? stored);
+
+    if (!Number.isFinite(resetAt) || resetAt <= Date.now()) {
+      await clearPersistedRateLimitLockout(rateLimitKey);
+      return null;
+    }
+
+    return { resetAt };
+  } catch (error) {
+    console.warn('⚠️ Redis lockout read failed:', error.message);
+    return null;
+  }
+}
+
 function purgeExpiredRateLimitLockout(rateLimitKey) {
   const entry = activeRateLimitLockouts.get(rateLimitKey);
   if (!entry) return null;
@@ -222,11 +281,22 @@ function purgeExpiredRateLimitLockout(rateLimitKey) {
 
   if (entry.timer) clearTimeout(entry.timer);
   activeRateLimitLockouts.delete(rateLimitKey);
+  void clearPersistedRateLimitLockout(rateLimitKey);
   return null;
 }
 
 function getActiveRateLimitLockout(rateLimitKey) {
   return purgeExpiredRateLimitLockout(rateLimitKey);
+}
+
+async function hydrateActiveRateLimitLockout(rateLimitKey) {
+  const cached = purgeExpiredRateLimitLockout(rateLimitKey);
+  if (cached) return cached;
+
+  const stored = await readPersistedRateLimitLockout(rateLimitKey);
+  if (!stored) return null;
+
+  return setActiveRateLimitLockout(rateLimitKey, stored.resetAt);
 }
 
 function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIMIT_LOCKOUT_MS) {
@@ -242,6 +312,7 @@ function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIM
     const current = activeRateLimitLockouts.get(rateLimitKey);
     if (current && current.resetAt <= Date.now()) {
       activeRateLimitLockouts.delete(rateLimitKey);
+      void clearPersistedRateLimitLockout(rateLimitKey);
     }
   }, delayMs);
 
@@ -249,6 +320,7 @@ function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIM
 
   const entry = { resetAt: nextResetAt, timer };
   activeRateLimitLockouts.set(rateLimitKey, entry);
+  void persistActiveRateLimitLockout(rateLimitKey, nextResetAt);
   return entry;
 }
 
@@ -327,7 +399,7 @@ const apiLimiter = rateLimit({
     const rateLimitKey = getRateLimitKey(req);
     const requestWindowResetAt = getResetAtMillis(req.rateLimit?.resetTime);
     const lockout = setActiveRateLimitLockout(rateLimitKey);
-const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
+    const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
 
     res.setHeader('Retry-After', String(retryAfterSeconds));
 
@@ -352,7 +424,7 @@ const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
 app.get('/api/rate-limit-status', async (req, res) => {
   try {
     const rateLimitKey = getRateLimitKey(req);
-    const activeLockout = getActiveRateLimitLockout(rateLimitKey);
+    const activeLockout = await hydrateActiveRateLimitLockout(rateLimitKey);
 
     if (activeLockout) {
       const retryAfterSeconds = getSecondsUntil(activeLockout.resetAt);
@@ -388,17 +460,17 @@ app.get('/api/rate-limit-status', async (req, res) => {
     const windowSnapshot = getRequestWindowSnapshot(info);
 
     if (windowSnapshot.expired) {
-  return res.json({
-    error: null,
-    rateLimited: false,
-    remaining: RATE_LIMIT_LIMIT,
-    retryAfterSeconds: 0,
-    resetAt: null,
-    lockoutResetAt: null,
-    requestWindowResetAt: null,
-    serverTime: Date.now(),
-  });
-}
+      return res.json({
+        error: null,
+        rateLimited: false,
+        remaining: RATE_LIMIT_LIMIT,
+        retryAfterSeconds: 0,
+        resetAt: null,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
+        serverTime: Date.now(),
+      });
+    }
 
     // Backend is the sole authority for the 15-minute lockout. If the caller
     // told us the cost of the operation it's about to run and the remaining
@@ -445,13 +517,13 @@ app.get('/api/rate-limit-status', async (req, res) => {
   }
 });
 
-app.use('/api', (req, res, next) => {
+app.use('/api', async (req, res, next) => {
   if (req.path === '/rate-limit-status') {
     return next();
   }
 
   const rateLimitKey = getRateLimitKey(req);
-  const activeLockout = getActiveRateLimitLockout(rateLimitKey);
+  const activeLockout = await hydrateActiveRateLimitLockout(rateLimitKey);
 
   if (!activeLockout) {
     return next();
@@ -475,8 +547,6 @@ app.use('/api', (req, res, next) => {
 
 // Apply rate limiter to all /api routes
 app.use('/api', apiLimiter);
-
-
 
 // 4. JSON body parser
 app.use(express.json());
@@ -1176,6 +1246,11 @@ app.listen(PORT, () => {
   console.log(`🔑 Raydium V3: Unauthenticated (fallback token pricing)`);
   console.log(`🔑 CoinGecko: ${COINGECKO_API_KEY ? 'Demo tier' : 'Keyless'} (primary SOL price)`);
   console.log(`🔑 CoinMarketCap: ${CMC_API_KEY ? 'Connected' : '⚠️  Not configured'} (SOL price fallback)`);
+    console.log(
+    REDIS_BACKUP_ENABLED
+      ? `🗄️ Redis backup store: using registered Redis URL from .env with prefix "${REDIS_KEY_PREFIX}"`
+      : '🗄️ Redis backup store: local fallback because no Redis account/URL is configured'
+  );
   const allowedOriginList = [...allowedOrigins];
   console.log(`🔒 Trust proxy: ${describeTrustProxySetting(trustProxySetting)}`);
   console.log(`🌐 Allowed CORS origins: ${allowedOriginList.length ? allowedOriginList.join(', ') : '(none configured)'}`);
