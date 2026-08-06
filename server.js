@@ -1107,6 +1107,117 @@ function toUnixSeconds(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+const TRANSACTION_WINDOW_PAGE_SIZE = 1000;
+const RECENT_TRANSACTION_COUNT = 7;
+const RETRYABLE_TRANSACTION_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+function isRetryableTransactionError(error) {
+  const status = Number(error?.status);
+  return (
+    RETRYABLE_TRANSACTION_STATUSES.has(status) ||
+    error?.name === 'AbortError' ||
+    /timed out/i.test(error?.message || '')
+  );
+}
+
+function buildHeliusTransactionsPayload(address, cutoffTimestamp, { limit, transactionDetails, paginationToken = null } = {}) {
+  const params = [
+    address,
+    {
+      transactionDetails,
+      limit,
+      sortOrder: 'desc',
+      filters: {
+        blockTime: { gte: cutoffTimestamp },
+        tokenAccounts: 'all',
+      },
+    },
+  ];
+
+  if (paginationToken) {
+    params[1].paginationToken = paginationToken;
+  }
+
+  return {
+    jsonrpc: '2.0',
+    id: '1',
+    method: 'getTransactionsForAddress',
+    params,
+  };
+}
+
+async function fetchJsonWithRetry(url, options = {}, { attempts = 2, timeoutMs = 15000 } = {}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      const rawBody = await response.text();
+
+      let body = null;
+      if (rawBody) {
+        try {
+          body = JSON.parse(rawBody);
+        } catch {
+          body = rawBody;
+        }
+      }
+
+      if (!response.ok) {
+        const error = new Error(`API error: ${response.status} ${response.statusText}`);
+        error.status = response.status;
+        error.body = body;
+        throw error;
+      }
+
+      if (body && typeof body === 'object' && !Array.isArray(body) && body.error) {
+        const code = Number(body.code ?? body.error?.code);
+        const message =
+          typeof body.error === 'string'
+            ? body.error
+            : body.error?.message || body.message || 'API error';
+
+        const error = new Error(message);
+        if (Number.isFinite(code)) error.status = code;
+        error.body = body;
+        throw error;
+      }
+
+      return body;
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryableTransactionError(error) || attempt === attempts) {
+        throw error;
+      }
+
+      const baseDelayMs = Math.min(1000 * (2 ** (attempt - 1)), 30000);
+      const jitteredDelayMs = baseDelayMs * (0.75 + Math.random() * 0.5);
+      await sleep(jitteredDelayMs);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  throw lastError || new Error('Unable to fetch upstream data.');
+}
+
+function getTransactionPageItems(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.result?.data)) return payload.result.data;
+  if (Array.isArray(payload?.result)) return payload.result;
+  if (Array.isArray(payload?.transactions)) return payload.transactions;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+function getPaginationToken(payload) {
+  return payload?.result?.paginationToken || payload?.paginationToken || null;
+}
+
 function getTransactionTimestamp(tx) {
   return toUnixSeconds(tx?.timestamp ?? tx?.blockTime ?? null);
 }
@@ -1129,25 +1240,31 @@ function getHistoryCutoffTimestamp(years = MAX_TRANSACTION_HISTORY_YEARS) {
 }
 
 function normalizeTransactionList(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.transactions)) return payload.transactions;
-  if (Array.isArray(payload?.result)) return payload.result;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
+  return getTransactionPageItems(payload);
 }
 
 async function fetchHeliusTransactionsWindow(address, cutoffTimestamp) {
-  const collected = [];
+  const transactions = [];
   const seenSignatures = new Set();
-  let beforeSignature = null;
+  let paginationToken = null;
 
   for (let page = 0; page < MAX_TRANSACTION_HISTORY_PAGES; page++) {
-    const url = new URL(`https://api-mainnet.helius-rpc.com/v0/addresses/${address}/transactions`);
-    url.searchParams.set('api-key', HELIUS_API_KEY);
-    url.searchParams.set('limit', String(HELIUS_TRANSACTION_PAGE_SIZE));
-    if (beforeSignature) url.searchParams.set('before', beforeSignature);
+    const payload = await fetchJsonWithRetry(
+      `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          buildHeliusTransactionsPayload(address, cutoffTimestamp, {
+            limit: TRANSACTION_WINDOW_PAGE_SIZE,
+            transactionDetails: 'signatures',
+            paginationToken,
+          })
+        ),
+      },
+      { attempts: 2, timeoutMs: 15000 }
+    );
 
-    const payload = await safeFetch(url.toString());
     const batch = normalizeTransactionList(payload);
     if (batch.length === 0) break;
 
@@ -1155,30 +1272,39 @@ async function fetchHeliusTransactionsWindow(address, cutoffTimestamp) {
       const signature = getTransactionSignature(tx);
       if (signature && seenSignatures.has(signature)) continue;
       if (signature) seenSignatures.add(signature);
-      collected.push(tx);
+      transactions.push(tx);
     }
 
-    const oldest = batch[batch.length - 1];
-    const oldestTimestamp = getTransactionTimestamp(oldest);
-    const oldestSignature = getTransactionSignature(oldest);
-
-    if (cutoffTimestamp !== null && oldestTimestamp !== null && oldestTimestamp < cutoffTimestamp) {
-      break;
-    }
-
-    if (!oldestSignature || batch.length < HELIUS_TRANSACTION_PAGE_SIZE) {
-      break;
-    }
-
-    beforeSignature = oldestSignature;
+    paginationToken = getPaginationToken(payload);
+    if (!paginationToken) break;
   }
 
-  if (cutoffTimestamp === null) return collected;
+  return transactions;
+}
 
-  return collected.filter((tx) => {
-    const timestamp = getTransactionTimestamp(tx);
-    return timestamp === null || timestamp >= cutoffTimestamp;
-  });
+async function fetchHeliusRecentTransactions(address, cutoffTimestamp) {
+  const payload = await fetchJsonWithRetry(
+    `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        buildHeliusTransactionsPayload(address, cutoffTimestamp, {
+          limit: RECENT_TRANSACTION_COUNT,
+          transactionDetails: 'full',
+        })
+      ),
+    },
+    { attempts: 2, timeoutMs: 15000 }
+  );
+
+  return normalizeTransactionList(payload);
+}
+
+async function fetchHeliusTransactionBundle(address, cutoffTimestamp) {
+  const transactions = await fetchHeliusTransactionsWindow(address, cutoffTimestamp);
+  const recentTransactions = await fetchHeliusRecentTransactions(address, cutoffTimestamp);
+  return { transactions, recentTransactions };
 }
 
 async function fetchShyftTransactionsWindow(address, cutoffTimestamp) {
@@ -1193,9 +1319,13 @@ async function fetchShyftTransactionsWindow(address, cutoffTimestamp) {
     url.searchParams.set('tx_num', String(SHYFT_TRANSACTION_PAGE_SIZE));
     if (beforeSignature) url.searchParams.set('before_tx_signature', beforeSignature);
 
-    const payload = await safeFetch(url.toString(), {
-      headers: { 'x-api-key': SHYFT_API_KEY },
-    });
+    const payload = await fetchJsonWithRetry(
+      url.toString(),
+      {
+        headers: { 'x-api-key': SHYFT_API_KEY },
+      },
+      { attempts: 2, timeoutMs: 15000 }
+    );
 
     const batch = normalizeTransactionList(payload);
     if (batch.length === 0) break;
@@ -1245,13 +1375,34 @@ app.get('/api/transactions', async (req, res) => {
     const normalizedAddress = address.trim();
 
     if (HELIUS_API_KEY) {
-      const transactions = await fetchHeliusTransactionsWindow(normalizedAddress, cutoffTimestamp);
-      return res.json({ transactions });
+      try {
+        const { transactions, recentTransactions } = await fetchHeliusTransactionBundle(
+          normalizedAddress,
+          cutoffTimestamp
+        );
+        return res.json({ transactions, recentTransactions });
+      } catch (heliusError) {
+        if (SHYFT_API_KEY && isRetryableTransactionError(heliusError)) {
+          console.warn(
+            `Helius transaction lookup failed (${heliusError.message}); falling back to Shyft.`
+          );
+          const transactions = await fetchShyftTransactionsWindow(normalizedAddress, cutoffTimestamp);
+          return res.json({
+            transactions,
+            recentTransactions: transactions.slice(0, RECENT_TRANSACTION_COUNT),
+          });
+        }
+
+        throw heliusError;
+      }
     }
 
     if (SHYFT_API_KEY) {
       const transactions = await fetchShyftTransactionsWindow(normalizedAddress, cutoffTimestamp);
-      return res.json({ transactions });
+      return res.json({
+        transactions,
+        recentTransactions: transactions.slice(0, RECENT_TRANSACTION_COUNT),
+      });
     }
 
     return res.status(503).json({
