@@ -1096,44 +1096,167 @@ app.get('/api/nfts', async (req, res) => {
   }
 });
 
-// ── Route 5 — GET /api/transactions?address= ──
-// Fetches transaction history from Helius or Shyft
+// ── Transaction history window helpers ──
+const MAX_TRANSACTION_HISTORY_YEARS = 5;
+const HELIUS_TRANSACTION_PAGE_SIZE = 100;
+const SHYFT_TRANSACTION_PAGE_SIZE = 10;
+const MAX_TRANSACTION_HISTORY_PAGES = 1000;
+
+function toUnixSeconds(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function getTransactionTimestamp(tx) {
+  return toUnixSeconds(tx?.timestamp ?? tx?.blockTime ?? null);
+}
+
+function getTransactionSignature(tx) {
+  return tx?.signature || tx?.signatures?.[0] || null;
+}
+
+function getHistoryCutoffTimestamp(years = MAX_TRANSACTION_HISTORY_YEARS) {
+  const parsedYears = Number(years);
+  const clampedYears = Math.max(
+    1,
+    Math.min(
+      Number.isFinite(parsedYears) ? Math.floor(parsedYears) : MAX_TRANSACTION_HISTORY_YEARS,
+      MAX_TRANSACTION_HISTORY_YEARS
+    )
+  );
+
+  return Math.floor(Date.now() / 1000) - Math.floor(clampedYears * 365.25 * 24 * 60 * 60);
+}
+
+function normalizeTransactionList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.transactions)) return payload.transactions;
+  if (Array.isArray(payload?.result)) return payload.result;
+  if (Array.isArray(payload?.data)) return payload.data;
+  return [];
+}
+
+async function fetchHeliusTransactionsWindow(address, cutoffTimestamp) {
+  const collected = [];
+  const seenSignatures = new Set();
+  let beforeSignature = null;
+
+  for (let page = 0; page < MAX_TRANSACTION_HISTORY_PAGES; page++) {
+    const url = new URL(`https://api-mainnet.helius-rpc.com/v0/addresses/${address}/transactions`);
+    url.searchParams.set('api-key', HELIUS_API_KEY);
+    url.searchParams.set('limit', String(HELIUS_TRANSACTION_PAGE_SIZE));
+    if (beforeSignature) url.searchParams.set('before', beforeSignature);
+
+    const payload = await safeFetch(url.toString());
+    const batch = normalizeTransactionList(payload);
+    if (batch.length === 0) break;
+
+    for (const tx of batch) {
+      const signature = getTransactionSignature(tx);
+      if (signature && seenSignatures.has(signature)) continue;
+      if (signature) seenSignatures.add(signature);
+      collected.push(tx);
+    }
+
+    const oldest = batch[batch.length - 1];
+    const oldestTimestamp = getTransactionTimestamp(oldest);
+    const oldestSignature = getTransactionSignature(oldest);
+
+    if (cutoffTimestamp !== null && oldestTimestamp !== null && oldestTimestamp < cutoffTimestamp) {
+      break;
+    }
+
+    if (!oldestSignature || batch.length < HELIUS_TRANSACTION_PAGE_SIZE) {
+      break;
+    }
+
+    beforeSignature = oldestSignature;
+  }
+
+  if (cutoffTimestamp === null) return collected;
+
+  return collected.filter((tx) => {
+    const timestamp = getTransactionTimestamp(tx);
+    return timestamp === null || timestamp >= cutoffTimestamp;
+  });
+}
+
+async function fetchShyftTransactionsWindow(address, cutoffTimestamp) {
+  const collected = [];
+  const seenSignatures = new Set();
+  let beforeSignature = null;
+
+  for (let page = 0; page < MAX_TRANSACTION_HISTORY_PAGES; page++) {
+    const url = new URL('https://api.shyft.to/sol/v1/transaction/history');
+    url.searchParams.set('network', 'mainnet-beta');
+    url.searchParams.set('account', address);
+    url.searchParams.set('tx_num', String(SHYFT_TRANSACTION_PAGE_SIZE));
+    if (beforeSignature) url.searchParams.set('before_tx_signature', beforeSignature);
+
+    const payload = await safeFetch(url.toString(), {
+      headers: { 'x-api-key': SHYFT_API_KEY },
+    });
+
+    const batch = normalizeTransactionList(payload);
+    if (batch.length === 0) break;
+
+    for (const tx of batch) {
+      const signature = getTransactionSignature(tx);
+      if (signature && seenSignatures.has(signature)) continue;
+      if (signature) seenSignatures.add(signature);
+      collected.push(tx);
+    }
+
+    const oldest = batch[batch.length - 1];
+    const oldestTimestamp = getTransactionTimestamp(oldest);
+    const oldestSignature = getTransactionSignature(oldest);
+
+    if (cutoffTimestamp !== null && oldestTimestamp !== null && oldestTimestamp < cutoffTimestamp) {
+      break;
+    }
+
+    if (!oldestSignature || batch.length < SHYFT_TRANSACTION_PAGE_SIZE) {
+      break;
+    }
+
+    beforeSignature = oldestSignature;
+  }
+
+  if (cutoffTimestamp === null) return collected;
+
+  return collected.filter((tx) => {
+    const timestamp = getTransactionTimestamp(tx);
+    return timestamp === null || timestamp >= cutoffTimestamp;
+  });
+}
+
+// ── Route 5 — GET /api/transactions?address=&years= ──
+// Fetches transaction history from Helius or Shyft, limited to the supported
+// chart window (default 5 years) instead of a hard 100-transaction cap.
 app.get('/api/transactions', async (req, res) => {
-  const { address } = req.query;
+  const { address, years } = req.query;
 
   if (!isValidSolanaAddress(address)) {
     return res.status(400).json({ error: 'Invalid Solana wallet address.' });
-  } 
+  }
 
   try {
-    let data;
+    const cutoffTimestamp = getHistoryCutoffTimestamp(years);
+    const normalizedAddress = address.trim();
 
     if (HELIUS_API_KEY) {
-      // Primary — Helius Enhanced Transactions API
-      data = await safeFetch(
-        `https://api-mainnet.helius-rpc.com/v0/addresses/${address.trim()}/transactions?api-key=${HELIUS_API_KEY}&limit=100`
-      );
-
-      res.json({
-        transactions: data || [],
-      });
-    } else if (SHYFT_API_KEY) {
-      // Backup — Shyft API
-      data = await safeFetch(
-        `https://api.shyft.to/sol/v1/transaction/history?network=mainnet-beta&account=${address.trim()}&limit=100`,
-        {
-          headers: { 'x-api-key': SHYFT_API_KEY },
-        }
-      );
-
-      res.json({
-        transactions: data.result || [],
-      });
-    } else {
-      return res.status(503).json({
-        error: 'No API key configured. Please add HELIUS_API_KEY to .env',
-      });
+      const transactions = await fetchHeliusTransactionsWindow(normalizedAddress, cutoffTimestamp);
+      return res.json({ transactions });
     }
+
+    if (SHYFT_API_KEY) {
+      const transactions = await fetchShyftTransactionsWindow(normalizedAddress, cutoffTimestamp);
+      return res.json({ transactions });
+    }
+
+    return res.status(503).json({
+      error: 'No API key configured. Please add HELIUS_API_KEY to .env',
+    });
   } catch (error) {
     console.error('Transaction error:', error.message);
     res.status(503).json({

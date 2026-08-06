@@ -190,11 +190,14 @@
     </button>
 
     <!-- Footer -->
-    <p class="offline-footer">© 2026 Ichnite. All Rights Reserved</p>
+     <p class="offline-footer">© <span id="copyright-year"></span> Ichnite. All Rights Reserved</p>
 
   </div>
 
   <script>
+      
+    document.getElementById('copyright-year').textContent = new Date().getFullYear();
+  
     // Manual check when user taps button
     function checkConnection() {
       const btn = document.querySelector('.retry-btn');

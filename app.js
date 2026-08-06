@@ -33,9 +33,7 @@ const CONFIG = Object.freeze({
 });
 
 // ════════════════════════════════════════
-// ── 2. COINGECKO VERIFIED COIN IDs ──
-// Improvement 3: Use CoinGecko actual Coin IDs
-// Verified from coingecko.com URLs
+// ── 2.
 // ════════════════════════════════════════
 
 
@@ -340,6 +338,10 @@ const solscanLink = document.getElementById('solscanLink');
 const seemore = document.getElementById('seemore');
 const accordionBtns = document.querySelectorAll('.accordion-btn');
 const infoAccordions = document.querySelectorAll('.accordion.full-width');
+const footerCopyright = document.getElementById('footerCopyright');
+if (footerCopyright) {
+  footerCopyright.textContent = `© ${new Date().getFullYear()} Ichnite. All Rights Reserved`;
+}
 
 // ════════════════════════════════════════
 // ── 7. SERVICE WORKER REGISTRATION ──
@@ -2516,8 +2518,10 @@ async function renderRecentTransactions(transactions, options = {}) {
   const signal = options.signal || currentAbortController?.signal;
   const safeTransactions = Array.isArray(transactions) ? transactions : [];
 
+    const recentTransactions = safeTransactions.slice(0, CONFIG.MAX_RECENT_TX);
+
   const txMints = [...new Set(
-    safeTransactions
+    recentTransactions
       .flatMap(tx => tx.tokenTransfers?.map(t => t.mint) || [])
       .filter(Boolean)
   )];
@@ -2551,7 +2555,7 @@ async function renderRecentTransactions(transactions, options = {}) {
     return;
   }
 
-  const recent = safeTransactions.slice(0, CONFIG.MAX_RECENT_TX);
+    const recent = recentTransactions;
   const grouped = {};
   recent.forEach(tx => {
     const dateKey = formatTxDate(tx.timestamp || tx.blockTime);
