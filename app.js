@@ -2377,9 +2377,6 @@ async function fetchTransactions(address) {
     if (signal?.aborted || rateLimitedUntil) return;
 
         allTransactions = data.transactions || [];
-    const recentTransactions = Array.isArray(data.recentTransactions)
-      ? data.recentTransactions
-      : allTransactions.slice(0, CONFIG.MAX_RECENT_TX);
 
     if (signal?.aborted || rateLimitedUntil) return;
 
@@ -2398,7 +2395,7 @@ async function fetchTransactions(address) {
       renderBarChart(allTransactions, currentBarRange, currentYearSelection);
     }
 
-    await renderRecentTransactions(recentTransactions, { signal });
+    await renderRecentTransactions(allTransactions, { signal });
 
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
