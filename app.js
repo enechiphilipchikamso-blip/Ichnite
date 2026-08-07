@@ -22,14 +22,11 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
-  // sol-price + sol-balance + tokens + nfts + transactions + wallet-age — the guaranteed base
-  // cost. wallet-age is its own dedicated, always-made call (see fetchWalletAge) rather than
-  // being derived from the transactions list, so it's counted here like any other guaranteed call.
-  TRACE_REQUEST_COST: 6,
-  // Transaction rendering conditionally adds one more call (/api/token-metadata) when the
-  // fetched transactions contain token transfers — this can't be known until fetchTransactions
-  // has already returned data, so the pre-flight budget check must reserve for the worst case.
-  TRACE_REQUEST_COST_MAX: 7,
+  // sol-price + sol-balance + tokens + nfts + chart + recent + wallet-age — guaranteed base.
+  // wallet-age stays dedicated and unchanged; chart and recent are now separate calls.
+  TRACE_REQUEST_COST: 7,
+  // Transaction rendering can still add /api/token-metadata for the 7 recent rows only.
+  TRACE_REQUEST_COST_MAX: 8,
 });
 
 // ════════════════════════════════════════
@@ -253,7 +250,8 @@ let liveUpdateInterval = null;
 let liveUpdateFailures = 0;
 let lastSearchTime = 0;
 let allTokens = [];
-let allTransactions = [];
+let allChartTransactions = [];
+let allRecentTransactions = [];
 let pieChartInstance = null;
 let barChartInstance = null;
 let solFetchFailed = false;
@@ -832,7 +830,8 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   currentSolBalance = 0;
   currentSolPrice = 0;
   allTokens = [];
-  allTransactions = [];
+  allChartTransactions = [];
+  allRecentTransactions = [];
 
   netWorthValue.textContent = '';
   hide(netWorthSkeleton);
@@ -1322,7 +1321,8 @@ function resetAll() {
   currentSolPrice = 0;
   currentSolBalance = 0;
   allTokens = [];
-  allTransactions = [];
+  allChartTransactions = [];
+  allRecentTransactions = [];
   hideAllMessages();
   hide(resultsSection);
   hide(walletDisplay);
@@ -1428,11 +1428,10 @@ async function handleSearch() {
   setSearchLoading(true);
 
   // Cost is passed to the backend so it can authoritatively decide whether the
-  // remaining budget covers a full Trace search. Reserve the worst case (7, not
-  // the base 6) because whether transaction rendering needs the extra
-  // token-metadata call can't be known until after fetchTransactions returns —
-  // the pre-flight check must never be able to admit a search it can't finish.
-  const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
+// remaining budget covers a full Trace search. Reserve the worst case (8, not
+// the base 7) because chart + recent are separate calls and recent may still
+// need token-metadata for the displayed rows.
+const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
 
   if (rateLimitCheck.rateLimited) {
     setSearchLoading(false);
@@ -1495,12 +1494,13 @@ async function handleSearch() {
     lastRateLimitInfo = null;
 
             await Promise.allSettled([
-      fetchSolBalance(currentWalletAddress),
-      fetchTokens(currentWalletAddress),
-      fetchNFTs(currentWalletAddress),
-      fetchTransactions(currentWalletAddress),
-      fetchWalletAge(currentWalletAddress),
-    ]);
+  fetchSolBalance(currentWalletAddress),
+  fetchTokens(currentWalletAddress),
+  fetchNFTs(currentWalletAddress),
+  fetchWalletActivityChart(currentWalletAddress),
+  fetchRecentTransactions(currentWalletAddress),
+  fetchWalletAge(currentWalletAddress),
+]);
 
     if (!rateLimitedUntil) {
       updateNetWorth();
@@ -2363,22 +2363,22 @@ function renderNFTGrid(nfts) {
 // Improvement 5 and 6: createElement and addEventListener
 // ════════════════════════════════════════
 
-async function fetchTransactions(address) {
+async function fetchWalletActivityChart(address) {
   document.getElementById('barChartError')?.remove();
   document.getElementById('barChartEmpty')?.remove();
 
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/transactions?address=${address}`, { signal });
+    const res = await fetch(`${API_BASE}/api/transactions/chart?address=${address}`, { signal });
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
 
-        allTransactions = data.transactions || [];
+    allChartTransactions = Array.isArray(data.transactions) ? data.transactions : [];
 
     if (signal?.aborted || rateLimitedUntil) return;
 
-    if (allTransactions.length === 0) {
+    if (allChartTransactions.length === 0) {
       barDataAvailable = false;
       hide(barSkeleton);
       hide(barChart);
@@ -2388,30 +2388,53 @@ async function fetchTransactions(address) {
       noActivityMsg.className = 'empty-msg';
       noActivityMsg.textContent = 'This wallet has no chart activity';
       barChart.closest('.chart-scroll-wrapper')?.appendChild(noActivityMsg);
-    } else {
-      barDataAvailable = true;
-      renderBarChart(allTransactions, currentBarRange, currentYearSelection);
+      return;
     }
 
-    await renderRecentTransactions(allTransactions, { signal });
-
+    barDataAvailable = true;
+    renderBarChart(allChartTransactions, currentBarRange, currentYearSelection);
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     barDataAvailable = false;
     failedFetchCount++;
-    console.error('Transaction error:', error);
+    console.error('Wallet activity chart error:', error);
+
     hide(barSkeleton);
     hide(barChart);
     barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
+
     const barErrorMsg = document.createElement('p');
     barErrorMsg.id = 'barChartError';
     barErrorMsg.className = 'empty-msg';
     barErrorMsg.textContent = 'Unable to load wallet activity chart';
     barChart.closest('.chart-scroll-wrapper')?.appendChild(barErrorMsg);
+  }
+}
+
+async function fetchRecentTransactions(address) {
+  try {
+    const signal = currentAbortController?.signal;
+    const res = await fetch(`${API_BASE}/api/transactions/recent?address=${address}`, { signal });
+    const data = await handleResponse(res);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    allRecentTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    await renderRecentTransactions(allRecentTransactions, { signal });
+  } catch (error) {
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
+
+    failedFetchCount++;
+    console.error('Recent transactions error:', error);
+
     hideSkeletonShowContent(txSkeleton, last7txList);
     hide(solscanLink);
     hide(seemore);
+
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load transactions';
@@ -2512,6 +2535,7 @@ function getTxIconSymbol(tx) {
   return '↓';
 }
 
+// Keep renderRecentTransactions exactly as-is.
 async function renderRecentTransactions(transactions, options = {}) {
   const signal = options.signal || currentAbortController?.signal;
   const safeTransactions = Array.isArray(transactions) ? transactions : [];
@@ -2548,7 +2572,7 @@ async function renderRecentTransactions(transactions, options = {}) {
     hide(seemore);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
-    msg.textContent = 'This wallet has no transactions yet';
+    msg.textContent = 'This wallet has no transactions';
     last7txList.replaceChildren(msg);
     return;
   }
@@ -2800,7 +2824,7 @@ toggleBtns.forEach(btn => {
       if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
       yearOptions.forEach(opt => opt.classList.remove('selected'));
       currentBarRange = range;
-      renderBarChart(allTransactions, range, currentYearSelection);
+      renderBarChart(allChartTransactions, range, currentYearSelection);
     }
   });
 });
@@ -2814,7 +2838,7 @@ yearOptions.forEach(option => {
     yearRangeActive = true;
     hide(yearDropdown);
     if (yearToggleBtn) yearToggleBtn.textContent = `${currentYearSelection} Year${currentYearSelection > 1 ? 's' : ''}`;
-    renderBarChart(allTransactions, 'year', currentYearSelection);
+    renderBarChart(allChartTransactions, 'year', currentYearSelection);
   });
 });
 
