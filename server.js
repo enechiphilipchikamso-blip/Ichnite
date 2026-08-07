@@ -1096,6 +1096,10 @@ app.get('/api/nfts', async (req, res) => {
   }
 });
 
+const HELIUS_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(process.env.HELIUS_MAX_TX_PAGES, 50); // 50 × 1000 = 50,000 tx cap
+const SHYFT_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(process.env.SHYFT_MAX_TX_PAGES, 100);   // fallback pagination cap
+const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(process.env.HELIUS_TX_TIME_BUDGET_MS, 8000); // wall-clock safety net
+
 // ── Transaction history helpers ──
 const MAX_TRANSACTION_HISTORY_YEARS = 5;
 
