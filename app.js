@@ -2613,12 +2613,12 @@ async function renderRecentTransactions(transactions, options = {}) {
       copyBtn.title = 'Copy transaction signature';
       copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
 
-      const signature = tx.signature || '';
-      copyBtn.addEventListener('click', async () => {
-        if (!signature) return;
-        await copyToClipboard(signature);
-        showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
-      });
+      const signature = tx.signature || tx.signatures?.[0] || '';
+copyBtn.addEventListener('click', async () => {
+  if (!signature) return;
+  await copyToClipboard(signature);
+  showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
+});
 
       row.appendChild(iconSpan);
       row.appendChild(textSpan);

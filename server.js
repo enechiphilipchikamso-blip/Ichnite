@@ -1418,6 +1418,7 @@ app.get('/api/transactions/recent', async (req, res) => {
     if (HELIUS_API_KEY) {
       try {
         const transactions = await fetchHeliusRecentTransactions(normalizedAddress);
+        if (transactions[0]) console.log('Recent tx sample keys (Helius):', Object.keys(transactions[0]));
         return res.json({ transactions, source: 'helius' });
       } catch (error) {
         console.warn('Helius recent fetch failed, trying Shyft fallback:', error.message);
@@ -1427,6 +1428,7 @@ app.get('/api/transactions/recent', async (req, res) => {
     if (SHYFT_API_KEY) {
       try {
         const transactions = await fetchShyftRecentTransactions(normalizedAddress);
+        if (transactions[0]) console.log('Recent tx sample keys (Shyft):', Object.keys(transactions[0]));
         return res.json({ transactions, source: 'shyft' });
       } catch (error) {
         console.error('Shyft recent fallback also failed:', error.message);
