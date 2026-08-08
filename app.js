@@ -1244,6 +1244,7 @@ function showAllSkeletons() {
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
   document.getElementById('solCardFullError')?.remove();
+  document.getElementById('solBalanceError')?.remove();
   show(tokenSkeleton);
   show(tokenTotalSkeleton);
   hide(tokenList);
@@ -1263,6 +1264,8 @@ function showAllSkeletons() {
   show(barSkeleton);
   hide(barSpinner);
   hide(barChart);
+  document.getElementById('barChartError')?.remove();
+  document.getElementById('barChartEmpty')?.remove();
   show(txSkeleton);
   hide(last7txList);
   hide(solscanLink);
@@ -2447,8 +2450,9 @@ async function fetchRecentTransactions(address) {
   }
 }
 
-// Dedicated, lightweight call for wallet age — decoupled from fetchTransactions
-// on purpose (see formatWalletAge). Uses the same handleResponse/abort/lockout
+// Dedicated, lightweight call for wallet age — decoupled from the chart/recent
+// transaction fetches on purpose (see formatWalletAge). Uses the same
+// handleResponse/abort/lockout
 // pattern as every other fetch here, so a 429 from this call is handled by the
 // single existing enterServerRateLimitState path — it cannot create a second
 // lockout or bypass the budget/lockout architecture.
@@ -2772,9 +2776,25 @@ function renderBarChart(transactions, range, yearCount = 1) {
             border: { display: false },
           },
           y: {
+            beginAtZero: true,
+            
             grid: { display: true, drawOnChartArea: true, color: 'rgba(124, 92, 252, 0.1)' },
-            ticks: { color: '#7c5cfc', font: { family: 'Space Grotesk', size: 11 }, stepSize: 1, beginAtZero: true },
             border: { display: false },
+            
+            ticks: { 
+              color: '#7c5cfc', 
+              font: { family: 'Space Grotesk', size: 11 },
+              
+              maxTicksLimit: 10, 
+              precision: 0,
+              
+              callback: function(value) {
+                if (value === 0) return '0'; 
+                if (value >= 1e6) return (value / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+                if (value >= 1e3) return (value / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+                return Math.round(value).toString();
+              }
+            },
           },
         },
       },

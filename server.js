@@ -1097,7 +1097,6 @@ app.get('/api/nfts', async (req, res) => {
 });
 
 const HELIUS_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(process.env.HELIUS_MAX_TX_PAGES, 50); // 50 × 1000 = 50,000 tx cap
-const SHYFT_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(process.env.SHYFT_MAX_TX_PAGES, 100);   // fallback pagination cap
 const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(process.env.HELIUS_TX_TIME_BUDGET_MS, 8000); // wall-clock safety net
 
 // ── Transaction history helpers ──
@@ -1105,8 +1104,6 @@ const MAX_TRANSACTION_HISTORY_YEARS = 5;
 
 const HELIUS_CHART_PAGE_SIZE = 1000;
 const HELIUS_RECENT_LIMIT = 7;
-const SHYFT_CHART_PAGE_SIZE = 10;
-const SHYFT_RECENT_LIMIT = 7;
 
 function parsePositiveIntEnv(rawValue, fallback) {
   const value = Number(rawValue);
@@ -1222,144 +1219,23 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
       });
 }
 
+// Recent-transactions data source — the classic Helius Enhanced Transactions
+// History REST endpoint, NOT getTransactionsForAddress. getTransactionsForAddress
+// (even in "full" mode) returns raw transaction/meta objects with no semantic
+// parsing — it has no description/type/source/tokenTransfers/nativeTransfers/
+// feePayer fields. Those only come from this endpoint (or POST /v0/transactions),
+// which is what describeTransaction(), getRecognizedSourceLabel(), getTxIconClass(),
+// and getTxIconSymbol() in app.js depend on. Single call, no pagination needed —
+// only the newest 7 are ever rendered.
 async function fetchHeliusRecentTransactions(address) {
-  const collected = [];
-  const seenSignatures = new Set();
-  let paginationToken = null;
+  const url = new URL(`https://api-mainnet.helius-rpc.com/v0/addresses/${address}/transactions`);
+  url.searchParams.set('api-key', HELIUS_API_KEY);
+  url.searchParams.set('limit', String(HELIUS_RECENT_LIMIT));
 
-  for (let page = 0; page < HELIUS_MAX_TRANSACTION_PAGES && collected.length < HELIUS_RECENT_LIMIT; page++) {
-    const heliusOptions = {
-      transactionDetails: 'full',
-      sortOrder: 'desc',
-      limit: HELIUS_RECENT_LIMIT,
-      filters: {
-        status: 'succeeded',
-        tokenAccounts: 'balanceChanged',
-      },
-    };
+  const payload = await safeFetch(url.toString());
+  const batch = normalizeTransactionList(payload);
 
-    if (paginationToken) heliusOptions.paginationToken = paginationToken;
-
-    let payload;
-    try {
-      payload = await fetchHeliusTransactionsForAddress(address, heliusOptions);
-    } catch (error) {
-      if (page === 0) throw error;
-      console.warn(`Helius recent-pagination stopped after ${page} page(s) — ${error.message}`);
-      break;
-    }
-
-    const batch = normalizeTransactionList(payload);
-    if (batch.length === 0) break;
-
-    for (const tx of batch) {
-      const signature = getTransactionSignature(tx);
-      if (signature && seenSignatures.has(signature)) continue;
-      if (signature) seenSignatures.add(signature);
-      collected.push(tx);
-      if (collected.length >= HELIUS_RECENT_LIMIT) break;
-    }
-
-    paginationToken = payload?.result?.paginationToken ?? null;
-    if (!paginationToken || batch.length < HELIUS_RECENT_LIMIT || collected.length >= HELIUS_RECENT_LIMIT) break;
-  }
-
-  return collected.slice(0, HELIUS_RECENT_LIMIT);
-}
-
-async function fetchShyftChartTransactions(address, cutoffTimestamp) {
-  const collected = [];
-  const seenSignatures = new Set();
-  let beforeSignature = null;
-
-  for (let page = 0; page < SHYFT_MAX_TRANSACTION_PAGES; page++) {
-    const url = new URL('https://api.shyft.to/sol/v1/transaction/history');
-    url.searchParams.set('network', 'mainnet-beta');
-    url.searchParams.set('account', address);
-    url.searchParams.set('tx_num', String(SHYFT_CHART_PAGE_SIZE));
-    if (beforeSignature) url.searchParams.set('before_tx_signature', beforeSignature);
-
-    let payload;
-    try {
-      payload = await safeFetch(url.toString(), {
-        headers: { 'x-api-key': SHYFT_API_KEY },
-      });
-    } catch (error) {
-      if (page === 0) throw error;
-      console.warn(`Shyft chart pagination stopped after ${page} page(s) — ${error.message}`);
-      break;
-    }
-
-    const batch = normalizeTransactionList(payload);
-    if (batch.length === 0) break;
-
-    for (const tx of batch) {
-      const signature = getTransactionSignature(tx);
-      if (signature && seenSignatures.has(signature)) continue;
-      if (signature) seenSignatures.add(signature);
-      collected.push(tx);
-    }
-
-    const oldest = batch[batch.length - 1];
-    const oldestTimestamp = getTransactionTimestamp(oldest);
-    const oldestSignature = getTransactionSignature(oldest);
-
-    if (cutoffTimestamp !== null && oldestTimestamp !== null && oldestTimestamp < cutoffTimestamp) break;
-    if (!oldestSignature || batch.length < SHYFT_CHART_PAGE_SIZE) break;
-
-    beforeSignature = oldestSignature;
-  }
-
-  return cutoffTimestamp === null
-    ? collected
-    : collected.filter((tx) => {
-        const timestamp = getTransactionTimestamp(tx);
-        return timestamp === null || timestamp >= cutoffTimestamp;
-      });
-}
-
-async function fetchShyftRecentTransactions(address) {
-  const collected = [];
-  const seenSignatures = new Set();
-  let beforeSignature = null;
-
-  for (let page = 0; page < SHYFT_MAX_TRANSACTION_PAGES && collected.length < SHYFT_RECENT_LIMIT; page++) {
-    const url = new URL('https://api.shyft.to/sol/v1/transaction/history');
-    url.searchParams.set('network', 'mainnet-beta');
-    url.searchParams.set('account', address);
-    url.searchParams.set('tx_num', String(SHYFT_RECENT_LIMIT));
-    if (beforeSignature) url.searchParams.set('before_tx_signature', beforeSignature);
-
-    let payload;
-    try {
-      payload = await safeFetch(url.toString(), {
-        headers: { 'x-api-key': SHYFT_API_KEY },
-      });
-    } catch (error) {
-      if (page === 0) throw error;
-      console.warn(`Shyft recent-pagination stopped after ${page} page(s) — ${error.message}`);
-      break;
-    }
-
-    const batch = normalizeTransactionList(payload);
-    if (batch.length === 0) break;
-
-    for (const tx of batch) {
-      const signature = getTransactionSignature(tx);
-      if (signature && seenSignatures.has(signature)) continue;
-      if (signature) seenSignatures.add(signature);
-      collected.push(tx);
-      if (collected.length >= SHYFT_RECENT_LIMIT) break;
-    }
-
-    const oldest = batch[batch.length - 1];
-    const oldestSignature = getTransactionSignature(oldest);
-    if (!oldestSignature || batch.length < SHYFT_RECENT_LIMIT || collected.length >= SHYFT_RECENT_LIMIT) break;
-
-    beforeSignature = oldestSignature;
-  }
-
-  return collected.slice(0, SHYFT_RECENT_LIMIT);
+  return batch.slice(0, HELIUS_RECENT_LIMIT);
 }
 
 app.get('/api/transactions/chart', async (req, res) => {
@@ -1372,31 +1248,15 @@ app.get('/api/transactions/chart', async (req, res) => {
   const cutoffTimestamp = getHistoryCutoffTimestamp(years);
   const normalizedAddress = address.trim();
 
-  try {
-    if (HELIUS_API_KEY) {
-      try {
-        const transactions = await fetchHeliusChartTransactions(normalizedAddress, cutoffTimestamp);
-        return res.json({ transactions, source: 'helius' });
-      } catch (error) {
-        console.warn('Helius chart fetch failed, trying Shyft fallback:', error.message);
-      }
-    }
-
-    if (SHYFT_API_KEY) {
-      try {
-        const transactions = await fetchShyftChartTransactions(normalizedAddress, cutoffTimestamp);
-        return res.json({ transactions, source: 'shyft' });
-      } catch (error) {
-        console.error('Shyft chart fallback also failed:', error.message);
-        return res.status(503).json({
-          error: 'Unable to fetch wallet activity chart. Please try again shortly.',
-        });
-      }
-    }
-
+  if (!HELIUS_API_KEY) {
     return res.status(503).json({
       error: 'No API key configured. Please add HELIUS_API_KEY to .env',
     });
+  }
+
+  try {
+    const transactions = await fetchHeliusChartTransactions(normalizedAddress, cutoffTimestamp);
+    return res.json({ transactions, source: 'helius' });
   } catch (error) {
     console.error('Wallet activity chart error:', error.message);
     return res.status(503).json({
@@ -1414,33 +1274,15 @@ app.get('/api/transactions/recent', async (req, res) => {
 
   const normalizedAddress = address.trim();
 
-  try {
-    if (HELIUS_API_KEY) {
-      try {
-        const transactions = await fetchHeliusRecentTransactions(normalizedAddress);
-        if (transactions[0]) console.log('Recent tx sample keys (Helius):', Object.keys(transactions[0]));
-        return res.json({ transactions, source: 'helius' });
-      } catch (error) {
-        console.warn('Helius recent fetch failed, trying Shyft fallback:', error.message);
-      }
-    }
-
-    if (SHYFT_API_KEY) {
-      try {
-        const transactions = await fetchShyftRecentTransactions(normalizedAddress);
-        if (transactions[0]) console.log('Recent tx sample keys (Shyft):', Object.keys(transactions[0]));
-        return res.json({ transactions, source: 'shyft' });
-      } catch (error) {
-        console.error('Shyft recent fallback also failed:', error.message);
-        return res.status(503).json({
-          error: 'Unable to fetch recent transactions. Please try again shortly.',
-        });
-      }
-    }
-
+  if (!HELIUS_API_KEY) {
     return res.status(503).json({
       error: 'No API key configured. Please add HELIUS_API_KEY to .env',
     });
+  }
+
+  try {
+    const transactions = await fetchHeliusRecentTransactions(normalizedAddress);
+    return res.json({ transactions, source: 'helius' });
   } catch (error) {
     console.error('Recent transactions error:', error.message);
     return res.status(503).json({
