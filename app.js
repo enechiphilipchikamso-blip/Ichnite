@@ -2476,66 +2476,6 @@ async function fetchWalletAge(address) {
   }
 }
 
-function getRecentTransactionSignature(tx) {
-  return tx?.signature || tx?.signatures?.[0] || tx?.transaction?.signatures?.[0] || '';
-}
-
-function getAccountPubkey(accountKey) {
-  if (!accountKey) return null;
-  if (typeof accountKey === 'string') return accountKey;
-  return accountKey.pubkey || accountKey.publicKey || accountKey.address || null;
-}
-
-function describeRawSolTransfer(tx) {
-  const message = tx?.transaction?.message || tx?.message;
-  const meta = tx?.meta;
-  const accountKeys = Array.isArray(message?.accountKeys) ? message.accountKeys : [];
-  const preBalances = Array.isArray(meta?.preBalances) ? meta.preBalances : [];
-  const postBalances = Array.isArray(meta?.postBalances) ? meta.postBalances : [];
-
-  if (
-    accountKeys.length === 0 ||
-    accountKeys.length !== preBalances.length ||
-    accountKeys.length !== postBalances.length
-  ) {
-    return null;
-  }
-
-  const deltas = accountKeys
-    .map((accountKey, index) => {
-      const address = getAccountPubkey(accountKey);
-      if (!address) return null;
-
-      const delta = Number(postBalances[index]) - Number(preBalances[index]);
-      if (!Number.isFinite(delta) || delta === 0) return null;
-
-      return { address, delta };
-    })
-    .filter(Boolean);
-
-  if (deltas.length !== 2) return null;
-
-  const sender = deltas.find((entry) => entry.delta < 0);
-  const receiver = deltas.find((entry) => entry.delta > 0);
-
-  if (!sender || !receiver) return null;
-
-  const lamports = Math.min(Math.abs(sender.delta), receiver.delta);
-  if (!Number.isFinite(lamports) || lamports <= 0) return null;
-
-  const solAmount = Number((lamports / 1e9).toFixed(2));
-
-  if (sender.address === currentWalletAddress) {
-    return `Sent ${solAmount} SOL to ${truncateAddress(receiver.address)}`;
-  }
-
-  if (receiver.address === currentWalletAddress) {
-    return `Received ${solAmount} SOL from ${truncateAddress(sender.address)}`;
-  }
-
-  return `${truncateAddress(sender.address)} sent ${solAmount} SOL to ${truncateAddress(receiver.address)}`;
-}
-
 const GENERIC_SOURCES = new Set(['SYSTEM_PROGRAM', 'UNKNOWN']);
 
 function getRecognizedSourceLabel(tx) {
@@ -2576,8 +2516,6 @@ function describeTransaction(tx, txTokenMetadata) {
   if (type === 'NFT_SALE') return 'Sold an NFT';
   if (type === 'NFT_MINT') return 'Minted an NFT';
   if (type === 'STAKE') return 'Staked SOL';
-    const rawSolTransfer = describeRawSolTransfer(tx);
-  if (rawSolTransfer) return rawSolTransfer;
   return 'Interacted with a Solana program';
 }
 
@@ -2670,23 +2608,17 @@ async function renderRecentTransactions(transactions, options = {}) {
       textSpan.textContent = describeTransaction(tx, txTokenMetadata);
 
       // Copy signature button — Improvement 6: addEventListener not onclick
-            const copyBtn = document.createElement('button');
-      copyBtn.type = 'button';
+                  const copyBtn = document.createElement('button');
       copyBtn.className = 'copy-sig-btn';
       copyBtn.title = 'Copy transaction signature';
       copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
 
-      const signature = getRecentTransactionSignature(tx);
-
-      copyBtn.addEventListener('click', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-
-        if (!signature) return;
-
-        await copyToClipboard(signature);
-        showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
-      });
+      const signature = tx.signature || tx.signatures?.[0] || '';
+copyBtn.addEventListener('click', async () => {
+  if (!signature) return;
+  await copyToClipboard(signature);
+  showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
+});
 
       row.appendChild(iconSpan);
       row.appendChild(textSpan);
