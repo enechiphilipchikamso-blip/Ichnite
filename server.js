@@ -1219,7 +1219,7 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
+    const batch = normalizeTransactionList(payload);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
@@ -1245,48 +1245,25 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
 }
 
 async function fetchHeliusRecentTransactions(address) {
-  const collected = [];
-  const seenSignatures = new Set();
-  let paginationToken = null;
+  const url = new URL(
+    `https://api.helius.xyz/v0/addresses/${address}/transactions`
+  );
 
-  for (let page = 0; page < HELIUS_MAX_TRANSACTION_PAGES && collected.length < HELIUS_RECENT_LIMIT; page++) {
-    const heliusOptions = {
-      transactionDetails: 'full',
-      sortOrder: 'desc',
-      limit: HELIUS_RECENT_LIMIT,
-      filters: {
-        status: 'succeeded',
-        tokenAccounts: 'balanceChanged',
-      },
-    };
+  url.searchParams.set('api-key', HELIUS_API_KEY);
+  url.searchParams.set('limit', String(HELIUS_RECENT_LIMIT));
 
-    if (paginationToken) heliusOptions.paginationToken = paginationToken;
+  try {
+    const transactions = await safeFetch(url.toString());
 
-    let payload;
-    try {
-      payload = await fetchHeliusTransactionsForAddress(address, heliusOptions);
-    } catch (error) {
-      if (page === 0) throw error;
-      console.warn(`Helius recent-pagination stopped after ${page} page(s) — ${error.message}`);
-      break;
+    if (!Array.isArray(transactions)) {
+      throw new Error('Unexpected Helius Enhanced Transactions response shape');
     }
 
-    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
-    if (batch.length === 0) break;
-
-    for (const tx of batch) {
-      const signature = getTransactionSignature(tx);
-      if (signature && seenSignatures.has(signature)) continue;
-      if (signature) seenSignatures.add(signature);
-      collected.push(tx);
-      if (collected.length >= HELIUS_RECENT_LIMIT) break;
-    }
-
-    paginationToken = payload?.result?.paginationToken ?? null;
-    if (!paginationToken || batch.length < HELIUS_RECENT_LIMIT || collected.length >= HELIUS_RECENT_LIMIT) break;
+    return transactions.slice(0, HELIUS_RECENT_LIMIT);
+  } catch (error) {
+    console.error(`Helius Enhanced recent transactions failed: ${error.message}`);
+    throw error;
   }
-
-  return collected.slice(0, HELIUS_RECENT_LIMIT);
 }
 
 async function fetchShyftChartTransactions(address, cutoffTimestamp) {
@@ -1312,7 +1289,7 @@ async function fetchShyftChartTransactions(address, cutoffTimestamp) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
+    const batch = normalizeTransactionList(payload);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
@@ -1363,7 +1340,7 @@ async function fetchShyftRecentTransactions(address) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
+    const batch = normalizeTransactionList(payload);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
