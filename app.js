@@ -1506,7 +1506,12 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
       updateNetWorth();
     }
 
-        if (!rateLimitedUntil && failedFetchCount >= 4) {
+        // 5 independent card-level failure sources: sol-balance, tokens, nfts,
+        // chart, recent-transactions. (Was 4 before chart/recent were split out
+        // of one combined /api/transactions call — see fetchTransactionsChart/
+        // fetchTransactionsRecent.) wallet-age failure is tracked separately via
+        // solAgeFailed and deliberately does not count toward this total.
+        if (!rateLimitedUntil && failedFetchCount >= 5) {
       showError('server');
     }
   } finally {
