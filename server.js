@@ -1148,6 +1148,28 @@ function normalizeTransactionList(payload) {
   return [];
 }
 
+function normalizeTransactionForFrontend(tx) {
+  if (!tx || typeof tx !== 'object') return tx;
+
+  const normalized = { ...tx };
+  const timestamp = getTransactionTimestamp(tx);
+  const signature = getTransactionSignature(tx);
+
+  if (Number.isFinite(timestamp)) {
+    normalized.timestamp = timestamp;
+    normalized.blockTime = timestamp;
+  }
+
+  if (signature) {
+    normalized.signature = signature;
+    if (!Array.isArray(normalized.signatures) || normalized.signatures.length === 0) {
+      normalized.signatures = [signature];
+    }
+  }
+
+  return normalized;
+}
+
 // Helius JSON-RPC helper for getTransactionsForAddress
 async function fetchHeliusTransactionsForAddress(address, heliusOptions) {
   const data = await safeFetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
@@ -1197,7 +1219,7 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload);
+    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
@@ -1249,7 +1271,7 @@ async function fetchHeliusRecentTransactions(address) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload);
+    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
@@ -1290,7 +1312,7 @@ async function fetchShyftChartTransactions(address, cutoffTimestamp) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload);
+    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
@@ -1341,7 +1363,7 @@ async function fetchShyftRecentTransactions(address) {
       break;
     }
 
-    const batch = normalizeTransactionList(payload);
+    const batch = normalizeTransactionList(payload).map(normalizeTransactionForFrontend);
     if (batch.length === 0) break;
 
     for (const tx of batch) {
