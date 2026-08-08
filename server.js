@@ -1148,28 +1148,6 @@ function normalizeTransactionList(payload) {
   return [];
 }
 
-function normalizeTransactionForFrontend(tx) {
-  if (!tx || typeof tx !== 'object') return tx;
-
-  const normalized = { ...tx };
-  const timestamp = getTransactionTimestamp(tx);
-  const signature = getTransactionSignature(tx);
-
-  if (Number.isFinite(timestamp)) {
-    normalized.timestamp = timestamp;
-    normalized.blockTime = timestamp;
-  }
-
-  if (signature) {
-    normalized.signature = signature;
-    if (!Array.isArray(normalized.signatures) || normalized.signatures.length === 0) {
-      normalized.signatures = [signature];
-    }
-  }
-
-  return normalized;
-}
-
 // Helius JSON-RPC helper for getTransactionsForAddress
 async function fetchHeliusTransactionsForAddress(address, heliusOptions) {
   const data = await safeFetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
@@ -1245,25 +1223,48 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
 }
 
 async function fetchHeliusRecentTransactions(address) {
-  const url = new URL(
-    `https://api.helius.xyz/v0/addresses/${address}/transactions`
-  );
+  const collected = [];
+  const seenSignatures = new Set();
+  let paginationToken = null;
 
-  url.searchParams.set('api-key', HELIUS_API_KEY);
-  url.searchParams.set('limit', String(HELIUS_RECENT_LIMIT));
+  for (let page = 0; page < HELIUS_MAX_TRANSACTION_PAGES && collected.length < HELIUS_RECENT_LIMIT; page++) {
+    const heliusOptions = {
+      transactionDetails: 'full',
+      sortOrder: 'desc',
+      limit: HELIUS_RECENT_LIMIT,
+      filters: {
+        status: 'succeeded',
+        tokenAccounts: 'balanceChanged',
+      },
+    };
 
-  try {
-    const transactions = await safeFetch(url.toString());
+    if (paginationToken) heliusOptions.paginationToken = paginationToken;
 
-    if (!Array.isArray(transactions)) {
-      throw new Error('Unexpected Helius Enhanced Transactions response shape');
+    let payload;
+    try {
+      payload = await fetchHeliusTransactionsForAddress(address, heliusOptions);
+    } catch (error) {
+      if (page === 0) throw error;
+      console.warn(`Helius recent-pagination stopped after ${page} page(s) — ${error.message}`);
+      break;
     }
 
-    return transactions.slice(0, HELIUS_RECENT_LIMIT);
-  } catch (error) {
-    console.error(`Helius Enhanced recent transactions failed: ${error.message}`);
-    throw error;
+    const batch = normalizeTransactionList(payload);
+    if (batch.length === 0) break;
+
+    for (const tx of batch) {
+      const signature = getTransactionSignature(tx);
+      if (signature && seenSignatures.has(signature)) continue;
+      if (signature) seenSignatures.add(signature);
+      collected.push(tx);
+      if (collected.length >= HELIUS_RECENT_LIMIT) break;
+    }
+
+    paginationToken = payload?.result?.paginationToken ?? null;
+    if (!paginationToken || batch.length < HELIUS_RECENT_LIMIT || collected.length >= HELIUS_RECENT_LIMIT) break;
   }
+
+  return collected.slice(0, HELIUS_RECENT_LIMIT);
 }
 
 async function fetchShyftChartTransactions(address, cutoffTimestamp) {
