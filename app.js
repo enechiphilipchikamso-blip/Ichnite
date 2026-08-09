@@ -612,13 +612,14 @@ function normalizeServerRateLimitInfo(info = {}) {
 
   const now = Date.now();
   const persisted = readPersistedRateLimitState();
-  const persistedLockoutResetAt =
-    persisted?.lockoutResetAt > now ? persisted.lockoutResetAt : null;
 
   // Only an explicit lockoutResetAt may define the lockout expiration. A
   // generic resetAt can represent the normal request-window reset instead
   // (see server.js), and must never be silently reinterpreted as the
-  // separate 15-minute lockout.
+  // separate 15-minute lockout. This function never falls back to
+  // client-persisted state to derive a lockoutResetAt — the server is the
+  // sole authority for that value; if the current payload doesn't carry a
+  // valid one, there is none, full stop.
   const lockoutResetAtValue = Number(payload.lockoutResetAt);
   const requestWindowResetAtValue = Number(payload.requestWindowResetAt);
   const remainingValue = Number(payload.remaining);
@@ -631,8 +632,6 @@ function normalizeServerRateLimitInfo(info = {}) {
     lockoutResetAtValue > now
   ) {
     lockoutResetAt = lockoutResetAtValue;
-  } else if (payload.rateLimited && persistedLockoutResetAt) {
-    lockoutResetAt = persistedLockoutResetAt;
   }
 
   return {
@@ -689,7 +688,7 @@ function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false
 }
 
 function startRateLimitCountdown(info = {}) {
-  const normalized = normalizeServerRateLimitInfo(info, { allowFallback: false });
+  const normalized = normalizeServerRateLimitInfo(info);
   const lockoutResetAt = Number(normalized.lockoutResetAt);
   const msgEl = document.getElementById('rateLimitMsg');
   if (!msgEl || !Number.isFinite(lockoutResetAt)) return;
@@ -1027,7 +1026,7 @@ async function checkRateLimitGate(operationCost = null) {
       };
     }
 
-    const normalized = normalizeServerRateLimitInfo(data, { allowFallback: false });
+    const normalized = normalizeServerRateLimitInfo(data);
     
     if (Number.isFinite(data.serverTime)) {
       const skewMs = Date.now() - data.serverTime;
