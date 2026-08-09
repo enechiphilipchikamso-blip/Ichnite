@@ -661,8 +661,8 @@ app.get('/api/sol-balance', async (req, res) => {
     }
 
     res.status(503).json({
-      error: 'Unable to fetch SOL balance. Solana network may be experiencing delays.',
-    });
+  error: 'Unable to fetch SOL balance. Solana network may be experiencing delays.',
+});
   }
 });
 
@@ -1354,8 +1354,8 @@ app.get('/api/wallet-age', async (req, res) => {
   } catch (error) {
     console.error('Wallet age error:', error.message);
     res.status(503).json({
-      error: 'Unable to fetch wallet age. Solana network may be experiencing delays.',
-    });
+  error: 'Unable to fetch wallet age. Solana network may be experiencing delays.',
+});
   }
 });
 
