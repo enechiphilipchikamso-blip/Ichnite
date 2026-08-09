@@ -1114,10 +1114,10 @@ function showError(type, customMessage) {
     networkErrorMsg.textContent = 'Too many requests. Please wait a moment.';
     show(networkErrorMsg);
   } else if (type === 'notfound') {
-    networkErrorMsg.textContent = 'Wallet data not found.';
+    networkErrorMsg.textContent = customMessage || 'Wallet data not found.';
     show(networkErrorMsg);
   } else if (type === 'solana-delay') {
-    networkErrorMsg.textContent = 'Solana network is experiencing delays. Please try again shortly.';
+    networkErrorMsg.textContent = customMessage || 'Solana network is experiencing delays. Please try again shortly.';
     show(networkErrorMsg);
   } else if (customMessage) {
     networkErrorMsg.textContent = customMessage;
@@ -1126,12 +1126,28 @@ function showError(type, customMessage) {
 }
 
 //Parse response status to show correct error
+// Single source of truth for classifying a failed backend response into
+// 'notfound' | 'solana-delay' | 'server'. Reads the backend's explicit
+// errorType/headline fields ONLY — never infers a type from substring-
+// matching the human-readable `error` text, so a generic 503/exception can
+// never be misclassified as a genuine Solana delay or a not-found condition.
+function classifyBackendErrorResponse(body, status) {
+  const backendType = typeof body?.errorType === 'string' ? body.errorType.toLowerCase() : null;
+  const headline = typeof body?.headline === 'string' && body.headline.trim() ? body.headline : null;
+
+  if (status === 404 || backendType === 'notfound') {
+    return { type: 'notfound', headline };
+  }
+  if (backendType === 'solana-delay') {
+    return { type: 'solana-delay', headline };
+  }
+  return { type: 'server', headline: null };
+}
+
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
-  const body = await response.json().catch(() => ({}));
-  const backendError = String(body?.error || '').toLowerCase();
-  const backendType = String(body?.errorType || '').toLowerCase();
+  const body = await response.json().catch(() => null);
 
   if (response.status === 429) {
     if (hasValidLockoutResetAt(body)) {
@@ -1143,19 +1159,28 @@ async function handleResponse(response) {
     throw { type: 'server' };
   }
 
-  if (response.status === 404 || backendType === 'notfound' || backendError.includes('not found')) {
-    throw { type: 'notfound' };
+  const classified = classifyBackendErrorResponse(body, response.status);
+  if (!rateLimitedUntil) {
+    showError(classified.type, classified.headline);
   }
+  throw { type: classified.type };
+}
 
-  if (
-    backendType === 'solana-delay' ||
-    backendError.includes('delay') ||
-    backendError.includes('temporarily unavailable')
-  ) {
-    throw { type: 'solana-delay' };
+// Same classification for call sites that already hold a Response but don't
+// route through handleResponse() — fetchSolBalance runs two requests in
+// parallel and must report each one's failure independently. Only ever
+// touches the global headline, never card DOM — safe to call from any
+// per-card failure branch without affecting other cards.
+async function reportBackendErrorType(response) {
+  if (rateLimitedUntil) return;
+  if (!response) {
+    showError('server');
+    return;
   }
-
-  throw { type: 'server' };
+  const body = await response.json().catch(() => null);
+  if (rateLimitedUntil) return;
+  const classified = classifyBackendErrorResponse(body, response.status);
+  showError(classified.type, classified.headline);
 }
 
 function resetInputState() {
@@ -1548,12 +1573,7 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
     if (!rateLimitedUntil) {
       updateNetWorth();
     }
-
-        // 5 independent card-level failure sources: sol-balance, tokens, nfts,
-        // chart, recent-transactions. (Was 4 before chart/recent were split out
-        // of one combined /api/transactions call — see fetchTransactionsChart/
-        // fetchTransactionsRecent.) wallet-age failure is tracked separately via
-        // solAgeFailed and deliberately does not count toward this total.
+    
         if (!rateLimitedUntil && failedFetchCount >= 5) {
       showError('server');
     }
@@ -1583,8 +1603,8 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
 
 async function fetchSolBalance(address) {
   removeAllById('solBalanceError');
-removeAllById('solPriceError');
-removeAllById('solCardFullError');
+  removeAllById('solPriceError');
+  removeAllById('solCardFullError');
   const signal = currentAbortController?.signal;
 
   const [priceResult, balanceResult] = await Promise.allSettled([
@@ -1597,7 +1617,9 @@ removeAllById('solCardFullError');
   const priceResponse = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
-        if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
+  hide(solSkeleton);
+
+  if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429
       ? await priceResponse.json().catch(() => ({}))
       : await balanceResponse.json().catch(() => ({}));
@@ -1607,14 +1629,34 @@ removeAllById('solCardFullError');
       return;
     }
 
-      showError('server');
-  return;
+    showError('server');
+
+    solBalanceFailed = true;
+    solPriceFailed = true;
+    solFetchFailed = true;
+    failedFetchCount++;
+
+    hide(solBalanceRow);
+    hide(document.getElementById('solEmptyMsg'));
+
+    const err = document.createElement('p');
+    err.id = 'solBalanceError';
+    err.className = 'empty-msg';
+    err.textContent = 'Unable to load SOL balance';
+    solBalanceRow.insertAdjacentElement('afterend', err);
+
+    show(document.getElementById('solMarketSection'));
+    hide(document.getElementById('solMarketPriceRow'));
+    hide(document.getElementById('solMarketChangeRow'));
+    show(document.getElementById('solMarketUnavailable'));
+    hide(solBalanceUsd);
+
+    revealCard(solBalanceRow.closest('.card'));
+    return;
   }
 
   const priceUnreachable = priceResult.status === 'rejected';
   const balanceUnreachable = balanceResult.status === 'rejected';
-
-  hide(solSkeleton);
 
   // Both requests failed at the NETWORK level — backend itself is unreachable.
   // Treat as one full-card failure, skip all per-section granularity entirely.
@@ -1626,8 +1668,6 @@ removeAllById('solCardFullError');
 
     hide(solBalanceRow);
     hide(document.getElementById('solEmptyMsg'));
-    hide(document.getElementById('solMarketSection'));
-    hide(document.getElementById('walletAgeRow'));
 
     const err = document.createElement('p');
     err.id = 'solBalanceError';
@@ -1635,6 +1675,19 @@ removeAllById('solCardFullError');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
 
+    // Market is owned by this same function's price handling below — show
+    // it with its own placeholder instead of hiding it. Wallet Age is owned
+    // exclusively by fetchWalletAge(), which runs independently in the same
+    // Promise.allSettled batch in handleSearch() — never touch #walletAgeRow
+    // here, or it races with that function's own correct handling of this
+    // exact failure.
+    show(document.getElementById('solMarketSection'));
+    hide(document.getElementById('solMarketPriceRow'));
+    hide(document.getElementById('solMarketChangeRow'));
+    show(document.getElementById('solMarketUnavailable'));
+    hide(solBalanceUsd);
+
+    showError('server');
     revealCard(solBalanceRow.closest('.card'));
     return;
   }
@@ -1675,6 +1728,7 @@ removeAllById('solCardFullError');
     err.className = 'empty-msg';
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
+    await reportBackendErrorType(balanceResponse);
   }
 
   if (signal?.aborted || rateLimitedUntil) return;
@@ -1714,6 +1768,7 @@ removeAllById('solCardFullError');
     hide(marketValuesRow2);
     show(marketPlaceholder);
     hide(solBalanceUsd);
+    await reportBackendErrorType(priceResponse);
   }
 
   revealCard(solBalanceRow.closest('.card'));
