@@ -8,7 +8,6 @@
 
 /// ════════════════════════════════════════
 // ── 1. CONFIGURATION — named constants frozen ──
-// Improvement 7: Named constants and freeze configuration objects
 /// ════════════════════════════════════════
 
 const CONFIG = Object.freeze({
@@ -238,7 +237,6 @@ const API_BASE =
 
 // ════════════════════════════════════════
 // ── 5. STATE VARIABLES ──
-// Improvement 2: Store SOL balance and price in variables
 // ════════════════════════════════════════
 
 let currentWalletAddress = '';
@@ -252,6 +250,8 @@ let lastSearchTime = 0;
 let allTokens = [];
 let allChartTransactions = [];
 let allRecentTransactions = [];
+let chartDataIsPartial = false; // true when the backend stopped paginating early (page cap, time budget, or a later-page provider error) — older activity within the selected range may be missing
+let chartPagesFetched = 0;
 let pieChartInstance = null;
 let barChartInstance = null;
 let solFetchFailed = false;
@@ -273,8 +273,7 @@ let rateLimitStateKind = null;
 let rateLimitTickInterval = null;
 let rateLimitRestoreInFlight = null;
 
-
-// Improvement 1: AbortController — cancel stale requests
+//AbortController — cancel stale requests
 let currentAbortController = null;
 let liveUpdateAbortController = null;
 
@@ -475,11 +474,6 @@ function getTokenColorSafe(token) {
   return staticColor && staticColor !== TOKEN_COLORS.DEFAULT
     ? staticColor
     : hashMintToColor(token.mint);
-}
-
-// Improvement 3: Get verified CoinGecko ID by symbol
-function getCoinGeckoId(symbol) {
-  return COINGECKO_IDS[symbol?.toUpperCase()] || null;
 }
 
 async function copyToClipboard(text) {
@@ -1086,7 +1080,7 @@ async function checkRateLimitGate(operationCost = null) {
   }
 }
 
-// Improvement 10: Differentiate offline and server errors
+// Differentiate offline and server errors
 function showError(type, customMessage) {
   hideAllMessages();
   if (type === 'empty') {
@@ -1114,7 +1108,7 @@ function showError(type, customMessage) {
   }
 }
 
-// Improvement 10: Parse response status to show correct error
+//Parse response status to show correct error
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
@@ -1240,7 +1234,7 @@ function showAllSkeletons() {
   show(solSkeleton);
   hide(document.getElementById('solMarketSection'));
   hide(document.getElementById('walletAgeRow'));
-    document.getElementById('solMarketUnavailable').textContent = 'Price unavailable';
+    document.getElementById('solMarketUnavailable').textContent = 'Market unavailable';
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
   document.getElementById('solCardFullError')?.remove();
@@ -1461,7 +1455,6 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
   showAllSkeletons();
   if (tokenSearch) tokenSearch.value = '';
 
-  /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
   document.title = `Wallet Results - ${currentWalletAddress}`;
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
@@ -1537,7 +1530,6 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
 
 // ════════════════════════════════════════
 // ── 15. SOL BALANCE ──
-// Improvement 2: Store SOL price and balance in variables
 // ════════════════════════════════════════
 
 async function fetchSolBalance(address) {
@@ -1680,7 +1672,6 @@ async function fetchSolBalance(address) {
 
 // ════════════════════════════════════════
 // ── 16. TOKEN HOLDINGS ──
-// Improvement 3: Use verified CoinGecko IDs
 // ════════════════════════════════════════
 
 async function fetchTokens(address) {
@@ -1947,7 +1938,7 @@ function openTokenSortOverlay() {
 
 // ════════════════════════════════════════
 // ── 17. PIE CHART ──
-// Improvement 4: Update chart instead of recreating when possible
+//Update chart instead of recreating when possible
 // ════════════════════════════════════════
 
 const OTHER_ID = '__other__';
@@ -2188,7 +2179,6 @@ function renderPieHiddenIndicators(hasVisibleSlices) {
 
 // ════════════════════════════════════════
 // ── 18. NFTs ──
-// Improvement 5 and 6: createElement and addEventListener
 // ════════════════════════════════════════
 
 async function fetchNFTs(address) {
@@ -2227,8 +2217,6 @@ async function fetchNFTs(address) {
     failedFetchCount++;
 
     console.error('NFT error:', error);
-    console.error('NFT error message:', error?.message);
-    console.error('NFT error stack:', error?.stack);
 
     nftGrid.replaceChildren();
     nftList.replaceChildren();
@@ -2341,7 +2329,7 @@ function renderNFTGrid(nfts) {
     img.className = 'nft-image';
     img.loading = 'lazy';
     img.onerror = () => {
-      // Improvement 9: Use backend token logo fallback
+      // Use backend token logo fallback
       img.src = `${API_BASE}/api/nft-image-fallback`;
       img.onerror = () => {
         img.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
@@ -2368,7 +2356,6 @@ function renderNFTGrid(nfts) {
 
 // ════════════════════════════════════════
 // ── 19. TRANSACTIONS ──
-// Improvement 5 and 6: createElement and addEventListener
 // ════════════════════════════════════════
 
 async function fetchWalletActivityChart(address) {
@@ -2383,6 +2370,16 @@ async function fetchWalletActivityChart(address) {
     if (signal?.aborted || rateLimitedUntil) return;
 
     allChartTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+    chartDataIsPartial = Boolean(data.partial);
+    chartPagesFetched = Number.isFinite(data.pagesFetched) ? data.pagesFetched : 0;
+
+    if (chartDataIsPartial) {
+      console.warn(
+        `Wallet activity chart is showing partial data — ${chartPagesFetched} page(s) fetched, ` +
+        `${allChartTransactions.length} transaction(s) loaded. Older activity within the selected ` +
+        `range may not be reflected.`
+      );
+    }
 
     if (signal?.aborted || rateLimitedUntil) return;
 
@@ -2616,18 +2613,17 @@ async function renderRecentTransactions(transactions, options = {}) {
       textSpan.className = 'tx-text';
       textSpan.textContent = describeTransaction(tx, txTokenMetadata);
 
-      // Copy signature button — Improvement 6: addEventListener not onclick
                   const copyBtn = document.createElement('button');
       copyBtn.className = 'copy-sig-btn';
       copyBtn.title = 'Copy transaction signature';
       copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
 
-      const signature = tx.signature || tx.signatures?.[0] || '';
-copyBtn.addEventListener('click', async () => {
-  if (!signature) return;
-  await copyToClipboard(signature);
-  showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
-});
+              const signature = tx.signature || tx.signatures?.[0] || '';
+        copyBtn.addEventListener('click', async () => {
+          if (!signature) return;
+          await copyToClipboard(signature);
+          showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
+        });
 
       row.appendChild(iconSpan);
       row.appendChild(textSpan);
@@ -2648,7 +2644,7 @@ copyBtn.addEventListener('click', async () => {
 
 // ════════════════════════════════════════
 // ── 20. BAR CHART ──
-// Improvement 4: Update chart instead of recreating
+//Update chart instead of recreating
 // ════════════════════════════════════════
 
 function buildBarChartData(transactions, range, yearCount = 1) {
@@ -2713,7 +2709,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
     hide(barSpinner);
     show(barChart);
 
-    // Improvement 4: Update existing bar chart instead of recreating
+    // Update existing bar chart instead of recreating
   if (barChartInstance) {
       barChartInstance.data.labels = labels;
       barChartInstance.data.datasets[0].data = counts;
@@ -2869,7 +2865,7 @@ yearOptions.forEach(option => {
 
 // ════════════════════════════════════════
 // ── 22. WALLET TOTAL NET WORTH ──
-// Improvement 2: Use stored variables — no duplicate API call
+//Use stored variables — no duplicate API call
 // ════════════════════════════════════════
 
 function updateNetWorth() {
@@ -3197,7 +3193,6 @@ accordionBtns.forEach(btn => {
 
 // ════════════════════════════════════════
 // ── 30. OFFLINE DETECTION ──
-// Improvement 10: Differentiate offline from server errors
 // ════════════════════════════════════════
 
 window.addEventListener('offline', () => {

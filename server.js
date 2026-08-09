@@ -1165,11 +1165,16 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
   const collected = [];
   const seenSignatures = new Set();
   let paginationToken = null;
+  let pagesFetched = 0;
+  // Defaults to the "ran out of allowed pages" case; every break point below
+  // overwrites this with the actual reason it stopped.
+  let endReason = 'page-cap';
   const startedAt = Date.now();
 
   for (let page = 0; page < HELIUS_MAX_TRANSACTION_PAGES; page++) {
     if (page > 0 && Date.now() - startedAt > HELIUS_TX_TIME_BUDGET_MS) {
       console.warn(`Helius chart pagination stopped after ${page} page(s) — time budget (${HELIUS_TX_TIME_BUDGET_MS}ms) reached.`);
+      endReason = 'time-budget';
       break;
     }
 
@@ -1191,11 +1196,17 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
     } catch (error) {
       if (page === 0) throw error;
       console.warn(`Helius chart pagination stopped after ${page} page(s) — ${error.message}`);
+      endReason = 'provider-error';
       break;
     }
 
+    pagesFetched += 1;
+
     const batch = normalizeTransactionList(payload);
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      endReason = 'no-more-data';
+      break;
+    }
 
     for (const tx of batch) {
       const signature = getTransactionSignature(tx);
@@ -1207,16 +1218,28 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
     const last = batch[batch.length - 1];
     paginationToken = payload?.result?.paginationToken ?? null;
 
-    if (!paginationToken || batch.length < HELIUS_CHART_PAGE_SIZE) break;
-    if (cutoffTimestamp !== null && getTransactionTimestamp(last) !== null && getTransactionTimestamp(last) < cutoffTimestamp) break;
+    if (!paginationToken || batch.length < HELIUS_CHART_PAGE_SIZE) {
+      endReason = 'no-more-data';
+      break;
+    }
+    if (cutoffTimestamp !== null && getTransactionTimestamp(last) !== null && getTransactionTimestamp(last) < cutoffTimestamp) {
+      endReason = 'cutoff-reached';
+      break;
+    }
   }
 
-  return cutoffTimestamp === null
+  // Only page-cap, time-budget, and provider-error mean we stopped short of
+  // the real end of the requested window — those are the "partial" cases.
+  const partial = endReason === 'page-cap' || endReason === 'time-budget' || endReason === 'provider-error';
+
+  const transactions = cutoffTimestamp === null
     ? collected
     : collected.filter((tx) => {
         const timestamp = getTransactionTimestamp(tx);
         return timestamp === null || timestamp >= cutoffTimestamp;
       });
+
+  return { transactions, partial, pagesFetched };
 }
 
 // Recent-transactions data source — the classic Helius Enhanced Transactions
@@ -1255,8 +1278,11 @@ app.get('/api/transactions/chart', async (req, res) => {
   }
 
   try {
-    const transactions = await fetchHeliusChartTransactions(normalizedAddress, cutoffTimestamp);
-    return res.json({ transactions, source: 'helius' });
+    const { transactions, partial, pagesFetched } = await fetchHeliusChartTransactions(normalizedAddress, cutoffTimestamp);
+    if (partial) {
+      console.warn(`Wallet activity chart truncated for ${normalizedAddress} — ${pagesFetched} page(s) fetched, ${transactions.length} transaction(s) returned.`);
+    }
+    return res.json({ transactions, source: 'helius', partial, pagesFetched });
   } catch (error) {
     console.error('Wallet activity chart error:', error.message);
     return res.status(503).json({
