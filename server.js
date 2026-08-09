@@ -567,12 +567,49 @@ function isValidSolanaAddress(address) {
 }
 
 // ── Helper — handle fetch errors gracefully ──
+// Carries the real upstream HTTP status so callers can tell "the provider is
+// down/overloaded" apart from "our own code threw" — never inferred from a
+// message string.
+class UpstreamError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'UpstreamError';
+    this.status = status;
+  }
+}
+
 async function safeFetch(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    throw new UpstreamError(`API error: ${response.status} ${response.statusText}`, response.status);
   }
   return response.json();
+}
+
+// Genuine "upstream/network delay" signals only — a 502/503/504 from the
+// provider itself, or a transport-level failure (timeout, reset, refused,
+// DNS). Anything else (4xx from the provider, a JS exception in our own
+// code, a malformed response) is NOT a delay — it stays 'server'.
+const DELAY_LIKE_HTTP_STATUSES = new Set([502, 503, 504]);
+const DELAY_LIKE_NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN']);
+
+function isSolanaDelayError(error) {
+  if (error instanceof UpstreamError) {
+    return DELAY_LIKE_HTTP_STATUSES.has(error.status);
+  }
+  const code = error?.code || error?.cause?.code;
+  return Boolean(code && DELAY_LIKE_NETWORK_CODES.has(code));
+}
+
+// Shared responder for every route below — the ONLY place errorType gets
+// decided, so every card gets the same, evidence-based classification.
+function sendUpstreamFailure(res, error, fallbackMessage) {
+  const errorType = isSolanaDelayError(error) ? 'solana-delay' : 'server';
+  const payload = { error: fallbackMessage, errorType };
+  if (errorType === 'solana-delay') {
+    payload.headline = 'Solana network is experiencing delays. Please try again shortly.';
+  }
+  return res.status(503).json(payload);
 }
 
 // ════════════════════════════════════════
@@ -608,7 +645,7 @@ app.get('/api/sol-price', async (req, res) => {
     return res.json({ price: quote.price, change24h: quote.percent_change_24h, source: 'coinmarketcap' });
   } catch (error) {
     console.error('CoinMarketCap SOL price also failed:', error.message);
-    res.status(503).json({ error: 'Unable to fetch SOL price. Please try again shortly.' });
+    return sendUpstreamFailure(res, error, 'Unable to fetch SOL price. Please try again shortly.');
   }
 });
 
@@ -645,6 +682,8 @@ app.get('/api/sol-balance', async (req, res) => {
   } catch (error) {
     console.error('SOL balance error:', error.message);
 
+    let finalError = error;
+
     // Fallback — Shyft wallet balance API, only tried if Helius/public RPC failed
     if (SHYFT_API_KEY) {
       try {
@@ -657,12 +696,11 @@ app.get('/api/sol-balance', async (req, res) => {
         return res.json({ balance: shyftData.result?.balance ?? 0 });
       } catch (shyftError) {
         console.error('Shyft balance fallback error:', shyftError.message);
+        finalError = shyftError;
       }
     }
 
-    res.status(503).json({
-  error: 'Unable to fetch SOL balance. Solana network may be experiencing delays.',
-});
+    return sendUpstreamFailure(res, finalError, 'Unable to fetch SOL balance. Solana network may be experiencing delays.');
   }
 });
 
@@ -1029,9 +1067,7 @@ res.json({ tokens: mappedTokens });
     }
   } catch (error) {
     console.error('Token error:', error.message);
-    res.status(503).json({
-      error: 'Unable to fetch token holdings. Please try again shortly.',
-    });
+    return sendUpstreamFailure(res, error, 'Unable to fetch token holdings. Please try again shortly.');
   }
 });
 
@@ -1090,9 +1126,7 @@ app.get('/api/nfts', async (req, res) => {
     }
   } catch (error) {
     console.error('NFT error:', error.message);
-    res.status(503).json({
-      error: 'Unable to fetch NFTs. Please try again shortly.',
-    });
+    return sendUpstreamFailure(res, error, 'Unable to fetch NFTs. Please try again shortly.');
   }
 });
 
@@ -1285,9 +1319,7 @@ app.get('/api/transactions/chart', async (req, res) => {
     return res.json({ transactions, source: 'helius', partial, pagesFetched });
   } catch (error) {
     console.error('Wallet activity chart error:', error.message);
-    return res.status(503).json({
-      error: 'Unable to fetch wallet activity chart. Please try again shortly.',
-    });
+    return sendUpstreamFailure(res, error, 'Unable to fetch wallet activity chart. Please try again shortly.');
   }
 });
 
@@ -1311,9 +1343,7 @@ app.get('/api/transactions/recent', async (req, res) => {
     return res.json({ transactions, source: 'helius' });
   } catch (error) {
     console.error('Recent transactions error:', error.message);
-    return res.status(503).json({
-      error: 'Unable to fetch recent transactions. Please try again shortly.',
-    });
+    return sendUpstreamFailure(res, error, 'Unable to fetch recent transactions. Please try again shortly.');
   }
 });
 
@@ -1353,9 +1383,7 @@ app.get('/api/wallet-age', async (req, res) => {
     }
   } catch (error) {
     console.error('Wallet age error:', error.message);
-    res.status(503).json({
-  error: 'Unable to fetch wallet age. Solana network may be experiencing delays.',
-});
+    return sendUpstreamFailure(res, error, 'Unable to fetch wallet age. Solana network may be experiencing delays.');
   }
 });
 
