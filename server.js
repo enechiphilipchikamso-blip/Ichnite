@@ -575,16 +575,6 @@ async function safeFetch(url, options = {}) {
   return response.json();
 }
 
-function sendStructuredError(res, statusCode, errorType, headline, detail = null, extra = {}) {
-  return res.status(statusCode).json({
-    errorType,
-    headline,
-    error: headline,
-    detail,
-    ...extra,
-  });
-}
-
 // ════════════════════════════════════════
 // ── API ROUTES ──
 // ════════════════════════════════════════
@@ -670,13 +660,9 @@ app.get('/api/sol-balance', async (req, res) => {
       }
     }
 
-    return sendStructuredError(
-  res,
-  503,
-  'solana-delay',
-  'Solana network is experiencing delays. Please try again shortly.',
-  'Unable to fetch SOL balance.'
-);
+    res.status(503).json({
+  error: 'Unable to fetch SOL balance. Solana network may be experiencing delays.',
+});
   }
 });
 
@@ -1367,13 +1353,9 @@ app.get('/api/wallet-age', async (req, res) => {
     }
   } catch (error) {
     console.error('Wallet age error:', error.message);
-    return sendStructuredError(
-  res,
-  503,
-  'solana-delay',
-  'Solana network is experiencing delays. Please try again shortly.',
-  'Unable to fetch wallet age.'
-);
+    res.status(503).json({
+  error: 'Unable to fetch wallet age. Solana network may be experiencing delays.',
+});
   }
 });
 
