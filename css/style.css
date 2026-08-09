@@ -1104,6 +1104,19 @@ grid-template-columns: repeat(4, 1fr);
   color: var(--white);
 }
 
+.history-chip.busy {
+  opacity: 0.55;
+  color: var(--blue-purple-faded);
+  border-color: rgba(124, 92, 252, 0.45);
+  background-color: var(--card-bg);
+}
+
+.history-chip.busy:active {
+  background-color: var(--blue-purple);
+  color: var(--white);
+  opacity: 1;
+}
+
 /* ── Token Controls Row ── */
 .token-controls-row {
   display: flex;

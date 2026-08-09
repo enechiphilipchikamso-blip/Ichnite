@@ -277,6 +277,23 @@ let rateLimitRestoreInFlight = null;
 let currentAbortController = null;
 let liveUpdateAbortController = null;
 
+function removeAllById(id) {
+  document.querySelectorAll(`[id="${id}"]`).forEach((node) => node.remove());
+}
+
+function clearRuntimeMessageNodes() {
+  [
+    'netWorthError',
+    'netWorthEmpty',
+    'netWorthPending',
+    'solBalanceError',
+    'solPriceError',
+    'solCardFullError',
+    'barChartError',
+    'barChartEmpty',
+  ].forEach(removeAllById);
+}
+
 // ════════════════════════════════════════
 // ── 6. DOM ELEMENTS ──
 // ════════════════════════════════════════
@@ -664,6 +681,7 @@ function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false
   searchBtn.disabled = false;
   searchBtn.classList.remove('loading');
   searchBtn.innerHTML = 'Trace';
+    setRecentAddressesBusy(false);
 
   if (hideMessage) {
     hide(document.getElementById('rateLimitMsg'));
@@ -1112,9 +1130,11 @@ function showError(type, customMessage) {
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
-        if (response.status === 429) {
-    const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => ({}));
+  const backendError = String(body?.error || '').toLowerCase();
+  const backendType = String(body?.errorType || '').toLowerCase();
 
+  if (response.status === 429) {
     if (hasValidLockoutResetAt(body)) {
       enterServerRateLimitState(body);
       throw { type: 'ratelimit' };
@@ -1124,8 +1144,19 @@ async function handleResponse(response) {
     throw { type: 'server' };
   }
 
-  if (response.status === 404) throw { type: 'notfound' };
-  throw { type: 'solana-delay' };
+  if (response.status === 404 || backendType === 'notfound' || backendError.includes('not found')) {
+    throw { type: 'notfound' };
+  }
+
+  if (
+    backendType === 'solana-delay' ||
+    backendError.includes('delay') ||
+    backendError.includes('temporarily unavailable')
+  ) {
+    throw { type: 'solana-delay' };
+  }
+
+  throw { type: 'server' };
 }
 
 function resetInputState() {
@@ -1167,9 +1198,10 @@ function renderSearchHistory() {
     chip.textContent = truncateAddress(address);
     chip.title = address;
     chip.addEventListener('click', () => {
-      walletInput.value = address;
-      handleSearch();
-    });
+  if (currentAbortController || rateLimitedUntil) return;
+  walletInput.value = address;
+  handleSearch();
+});
     
     let pressTimer = null;
     chip.addEventListener('touchstart', () => {
@@ -1224,9 +1256,7 @@ function showRemoveConfirm(addressToRemove) {
 function showAllSkeletons() {
   infoAccordions.forEach(el => hide(el));
   show(resultsSection);
-  document.getElementById('netWorthError')?.remove();
-  document.getElementById('netWorthEmpty')?.remove();
-  document.getElementById('netWorthPending')?.remove();
+  clearRuntimeMessageNodes();
   show(totalNetWorth);
   show(netWorthSkeleton);
   show(netWorthLabel);
@@ -1237,8 +1267,7 @@ function showAllSkeletons() {
     document.getElementById('solMarketUnavailable').textContent = 'Market unavailable';
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
-  document.getElementById('solCardFullError')?.remove();
-  document.getElementById('solBalanceError')?.remove();
+  clearRuntimeMessageNodes();
   show(tokenSkeleton);
   show(tokenTotalSkeleton);
   hide(tokenList);
@@ -1258,8 +1287,7 @@ function showAllSkeletons() {
   show(barSkeleton);
   hide(barSpinner);
   hide(barChart);
-  document.getElementById('barChartError')?.remove();
-  document.getElementById('barChartEmpty')?.remove();
+  clearRuntimeMessageNodes();
   show(txSkeleton);
   hide(last7txList);
   hide(solscanLink);
@@ -1276,6 +1304,8 @@ function hideSkeletonShowContent(skeletonEl, ...contentEls) {
 // ════════════════════════════════════════
 
 function setSearchLoading(isLoading) {
+  setRecentAddressesBusy(isLoading);
+
   if (isLoading) {
     searchBtn.disabled = true;
     searchBtn.classList.add('loading');
@@ -1285,6 +1315,12 @@ function setSearchLoading(isLoading) {
     searchBtn.classList.remove('loading');
     searchBtn.innerHTML = 'Trace';
   }
+}
+
+function setRecentAddressesBusy(isBusy) {
+  historyChips?.querySelectorAll('.history-chip').forEach((chip) => {
+    chip.classList.toggle('busy', Boolean(isBusy));
+  });
 }
 
 // ════════════════════════════════════════
@@ -1325,6 +1361,9 @@ function resetAll() {
   hide(walletDisplay);
   hide(clearBtn);
   hide(totalNetWorth);
+  setRecentAddressesBusy(false);
+  clearRuntimeMessageNodes();
+removePieHiddenIndicators();
   if (tokenSearch) tokenSearch.value = '';
   infoAccordions.forEach(el => show(el));
   infoAccordions.forEach(el => {
@@ -1382,6 +1421,10 @@ walletInput.addEventListener('focus', () => {
 // ════════════════════════════════════════
 
 async function handleSearch() {
+  if (currentAbortController) {
+    return; // a search is already in flight
+  }
+
   if (rateLimitedUntil) {
     return; // countdown already owns the disabled state
   }
@@ -1416,19 +1459,20 @@ async function handleSearch() {
 
   const existingResultsVisible = Boolean(currentWalletAddress);
 
-  // Abort any previous search before starting a new one.
-  if (currentAbortController) {
-    currentAbortController.abort();
-  }
   currentAbortController = new AbortController();
+const searchController = currentAbortController;
 
-  setSearchLoading(true);
+setSearchLoading(true);
 
   // Cost is passed to the backend so it can authoritatively decide whether the
 // remaining budget covers a full Trace search. Reserve the worst case (8, not
 // the base 7) because chart + recent are separate calls and recent may still
 // need token-metadata for the displayed rows.
 const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
+
+  if (searchController !== currentAbortController || searchController.signal.aborted) {
+    return;
+  }
 
   if (rateLimitCheck.rateLimited) {
     setSearchLoading(false);
@@ -1498,6 +1542,10 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
   fetchWalletAge(currentWalletAddress),
 ]);
 
+    if (searchController !== currentAbortController || searchController.signal.aborted) {
+      return;
+    }
+
     if (!rateLimitedUntil) {
       updateNetWorth();
     }
@@ -1511,6 +1559,7 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
       showError('server');
     }
   } finally {
+  if (currentAbortController === searchController) {
     if (!rateLimitedUntil) {
       setSearchLoading(false);
     } else {
@@ -1520,6 +1569,7 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
     }
     currentAbortController = null;
   }
+}
 
   if (!rateLimitedUntil) {
     liveUpdateInterval = setInterval(() => {
@@ -1533,9 +1583,9 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
 // ════════════════════════════════════════
 
 async function fetchSolBalance(address) {
-  document.getElementById('solBalanceError')?.remove();
-  document.getElementById('solPriceError')?.remove();
-  document.getElementById('solCardFullError')?.remove();
+  removeAllById('solBalanceError');
+removeAllById('solPriceError');
+removeAllById('solCardFullError');
   const signal = currentAbortController?.signal;
 
   const [priceResult, balanceResult] = await Promise.allSettled([
@@ -1558,7 +1608,8 @@ async function fetchSolBalance(address) {
       return;
     }
 
-    showError('server');
+      showError('server');
+  return;
   }
 
   const priceUnreachable = priceResult.status === 'rejected';
@@ -2359,8 +2410,8 @@ function renderNFTGrid(nfts) {
 // ════════════════════════════════════════
 
 async function fetchWalletActivityChart(address) {
-  document.getElementById('barChartError')?.remove();
-  document.getElementById('barChartEmpty')?.remove();
+  removeAllById('barChartError');
+removeAllById('barChartEmpty');
 
   try {
     const signal = currentAbortController?.signal;
@@ -2871,9 +2922,9 @@ yearOptions.forEach(option => {
 function updateNetWorth() {
   if (rateLimitedUntil) return;
 
-  document.getElementById('netWorthError')?.remove();
-  document.getElementById('netWorthEmpty')?.remove();
-  document.getElementById('netWorthPending')?.remove();
+  removeAllById('netWorthError');
+removeAllById('netWorthEmpty');
+removeAllById('netWorthPending');
 
   // A product/sum needs EVERY input valid — if either half of the math can't
   // be trusted, the total can't be trusted. Never silently treat a failed
