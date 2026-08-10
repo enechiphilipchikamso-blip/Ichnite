@@ -1131,7 +1131,31 @@ app.get('/api/nfts', async (req, res) => {
 });
 
 const HELIUS_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(process.env.HELIUS_MAX_TX_PAGES, 50); // 50 × 1000 = 50,000 tx cap
-const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(process.env.HELIUS_TX_TIME_BUDGET_MS, 8000); // wall-clock safety net
+const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(process.env.HELIUS_TX_TIME_BUDGET_MS, 20000);
+const HELIUS_CHART_PAGE_DELAY_MS = parsePositiveIntEnv(process.env.HELIUS_CHART_PAGE_DELAY_MS, 200);
+const HELIUS_MAX_PAGE_RETRIES = parsePositiveIntEnv(process.env.HELIUS_MAX_PAGE_RETRIES, 3);
+const HELIUS_RETRY_BASE_DELAY_MS = parsePositiveIntEnv(process.env.HELIUS_RETRY_BASE_DELAY_MS, 500);
+const HELIUS_CHART_CACHE_TTL_MS = parsePositiveIntEnv(process.env.HELIUS_CHART_CACHE_TTL_MS, 90000);
+const HELIUS_CHART_CACHE_MAX_ENTRIES = 200;
+const heliusChartResultCache = new Map();
+
+function getCachedChartResult(cacheKey) {
+  const entry = heliusChartResultCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    heliusChartResultCache.delete(cacheKey);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedChartResult(cacheKey, data) {
+  if (heliusChartResultCache.size >= HELIUS_CHART_CACHE_MAX_ENTRIES) {
+    const oldestKey = heliusChartResultCache.keys().next().value;
+    if (oldestKey !== undefined) heliusChartResultCache.delete(oldestKey);
+  }
+  heliusChartResultCache.set(cacheKey, { data, expiresAt: Date.now() + HELIUS_CHART_CACHE_TTL_MS });
+}
 
 // ── Transaction history helpers ──
 const MAX_TRANSACTION_HISTORY_YEARS = 5;
@@ -1195,6 +1219,22 @@ async function fetchHeliusTransactionsForAddress(address, heliusOptions) {
   return data;
 }
 
+async function fetchHeliusTransactionsForAddressWithRetry(address, heliusOptions) {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fetchHeliusTransactionsForAddress(address, heliusOptions);
+    } catch (error) {
+      const isRateLimited = error instanceof UpstreamError && error.status === 429;
+      if (!isRateLimited || attempt >= HELIUS_MAX_PAGE_RETRIES) throw error;
+      attempt += 1;
+      const backoffMs = HELIUS_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+      console.warn(`Helius 429 on this page — retrying in ${backoffMs}ms (attempt ${attempt}/${HELIUS_MAX_PAGE_RETRIES})`);
+      await sleep(backoffMs);
+    }
+  }
+}
+
 async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
   const collected = [];
   const seenSignatures = new Set();
@@ -1212,6 +1252,10 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
       break;
     }
 
+    if (page > 0) {
+      await sleep(HELIUS_CHART_PAGE_DELAY_MS);
+    }
+
     const heliusOptions = {
       transactionDetails: 'signatures',
       sortOrder: 'desc',
@@ -1226,7 +1270,7 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
 
     let payload;
     try {
-      payload = await fetchHeliusTransactionsForAddress(address, heliusOptions);
+      payload = await fetchHeliusTransactionsForAddressWithRetry(address, heliusOptions);
     } catch (error) {
       if (page === 0) throw error;
       console.warn(`Helius chart pagination stopped after ${page} page(s) — ${error.message}`);
@@ -1312,9 +1356,18 @@ app.get('/api/transactions/chart', async (req, res) => {
   }
 
   try {
+    const cacheKey = `${normalizedAddress}:${cutoffTimestamp ?? 'all'}`;
+    const cached = getCachedChartResult(cacheKey);
+    if (cached) {
+      return res.json({ ...cached, source: 'helius', cached: true });
+    }
+
     const { transactions, partial, pagesFetched } = await fetchHeliusChartTransactions(normalizedAddress, cutoffTimestamp);
     if (partial) {
       console.warn(`Wallet activity chart truncated for ${normalizedAddress} — ${pagesFetched} page(s) fetched, ${transactions.length} transaction(s) returned.`);
+    }
+    if (!partial) {
+      setCachedChartResult(cacheKey, { transactions, partial, pagesFetched });
     }
     return res.json({ transactions, source: 'helius', partial, pagesFetched });
   } catch (error) {

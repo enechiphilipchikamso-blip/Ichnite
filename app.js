@@ -266,7 +266,9 @@ let solBalanceFailed = false;
 let solPriceFailed = false;
 let solAgeFailed = false;
 let inputValidTimeout = null;
-let failedFetchCount = 0;
+let failedFetchCount = 0; // legacy — superseded by cardFailureOutcomes/finalizeCardFailures, left in place (unread, harmless)
+let cardFailureOutcomes = {};
+let hardFailureOverrideActive = false;
 let lastRateLimitInfo = null;
 let rateLimitedUntil = null;
 let rateLimitStateKind = null;
@@ -886,7 +888,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   solPriceChange.textContent = '';
   solPriceChange.className = 'sol-change';
 
-  walletAgeEl.textContent = 'Age unavailable';
+  walletAgeEl.textContent = 'Temporarily unavailable';
   if (showResults) {
     show(walletAgeRow);
   } else {
@@ -1113,11 +1115,11 @@ function showError(type, customMessage) {
   } else if (type === 'ratelimit') {
     networkErrorMsg.textContent = 'Too many requests. Please wait a moment.';
     show(networkErrorMsg);
-  } else if (type === 'notfound') {
-    networkErrorMsg.textContent = customMessage || 'Wallet data not found.';
-    show(networkErrorMsg);
   } else if (type === 'solana-delay') {
     networkErrorMsg.textContent = customMessage || 'Solana network is experiencing delays. Please try again shortly.';
+    show(networkErrorMsg);
+  } else if (type === 'invalid-address') {
+    networkErrorMsg.textContent = customMessage || 'Wallet not found - Invalid Solana Address';
     show(networkErrorMsg);
   } else if (customMessage) {
     networkErrorMsg.textContent = customMessage;
@@ -1131,17 +1133,9 @@ function showError(type, customMessage) {
 // errorType/headline fields ONLY — never infers a type from substring-
 // matching the human-readable `error` text, so a generic 503/exception can
 // never be misclassified as a genuine Solana delay or a not-found condition.
-function classifyBackendErrorResponse(body, status) {
+function classifyBackendErrorResponse(body) {
   const backendType = typeof body?.errorType === 'string' ? body.errorType.toLowerCase() : null;
-  const headline = typeof body?.headline === 'string' && body.headline.trim() ? body.headline : null;
-
-  if (status === 404 || backendType === 'notfound') {
-    return { type: 'notfound', headline };
-  }
-  if (backendType === 'solana-delay') {
-    return { type: 'solana-delay', headline };
-  }
-  return { type: 'server', headline: null };
+  return backendType === 'solana-delay' ? 'solana-delay' : 'server';
 }
 
 async function handleResponse(response) {
@@ -1155,32 +1149,84 @@ async function handleResponse(response) {
       throw { type: 'ratelimit' };
     }
 
+    hardFailureOverrideActive = true;
     showError('server');
     throw { type: 'server' };
   }
 
-  const classified = classifyBackendErrorResponse(body, response.status);
-  if (!rateLimitedUntil) {
-    showError(classified.type, classified.headline);
+  if (response.status === 400) {
+    hardFailureOverrideActive = true;
+    showError('invalid-address', 'Wallet not found - Invalid Solana Address');
+    throw { type: 'invalid-address' };
   }
-  throw { type: classified.type };
+
+  throw { type: classifyBackendErrorResponse(body) };
 }
 
-// Same classification for call sites that already hold a Response but don't
-// route through handleResponse() — fetchSolBalance runs two requests in
-// parallel and must report each one's failure independently. Only ever
-// touches the global headline, never card DOM — safe to call from any
-// per-card failure branch without affecting other cards.
-async function reportBackendErrorType(response) {
-  if (rateLimitedUntil) return;
+async function reportBackendErrorType(response, cardKey) {
+  if (rateLimitedUntil || hardFailureOverrideActive) return;
   if (!response) {
-    showError('server');
+    recordCardFailure(cardKey, 'server');
+    return;
+  }
+  if (response.status === 400) {
+    hardFailureOverrideActive = true;
+    showError('invalid-address', 'Wallet not found - Invalid Solana Address');
     return;
   }
   const body = await response.json().catch(() => null);
-  if (rateLimitedUntil) return;
-  const classified = classifyBackendErrorResponse(body, response.status);
-  showError(classified.type, classified.headline);
+  if (rateLimitedUntil || hardFailureOverrideActive) return;
+  recordCardFailure(cardKey, classifyBackendErrorResponse(body));
+}
+
+const CARD_SLOTS = ['solBalance', 'market', 'tokens', 'nfts', 'chart', 'recent', 'age'];
+const CARD_SLOT_ELEMENT_IDS = {
+  solBalance: 'solBalanceError',
+  market: 'solMarketUnavailable',
+  age: 'walletAge',
+  tokens: 'tokenListError',
+  nfts: 'nftListError',
+  chart: 'barChartError',
+  recent: 'recentTxError',
+};
+const FAILURE_REASON_LABEL = {
+  'solana-delay': 'Solana delay',
+  server: 'server error',
+};
+const FAILURE_BANNER_TEXT = {
+  'solana-delay': 'Solana network is experiencing delays. Please try again shortly.',
+  server: 'Ichnite server is having issues. Please try again shortly.',
+};
+
+function recordCardFailure(cardKey, type) {
+  cardFailureOutcomes[cardKey] = type;
+}
+
+function finalizeCardFailures() {
+  if (hardFailureOverrideActive || rateLimitedUntil) return;
+
+  const failedKeys = Object.keys(cardFailureOutcomes);
+  if (failedKeys.length === 0) return;
+
+  const allFailed = failedKeys.length === CARD_SLOTS.length;
+  const allSameType = allFailed && failedKeys.every(
+    (key) => cardFailureOutcomes[key] === cardFailureOutcomes[failedKeys[0]]
+  );
+
+  if (allSameType) {
+    const type = cardFailureOutcomes[failedKeys[0]];
+    showError(type, FAILURE_BANNER_TEXT[type]);
+    return;
+  }
+
+  for (const key of failedKeys) {
+    const type = cardFailureOutcomes[key];
+    const label = FAILURE_REASON_LABEL[type];
+    const el = document.getElementById(CARD_SLOT_ELEMENT_IDS[key]);
+    if (el && label) {
+      el.textContent = `${el.textContent} - ${label}`;
+    }
+  }
 }
 
 function resetInputState() {
@@ -1555,6 +1601,8 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
     solPriceFailed = false;
     solAgeFailed = false;
     failedFetchCount = 0;
+    cardFailureOutcomes = {};
+    hardFailureOverrideActive = false;
     lastRateLimitInfo = null;
 
             await Promise.allSettled([
@@ -1574,9 +1622,7 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
       updateNetWorth();
     }
     
-        if (!rateLimitedUntil && failedFetchCount >= 5) {
-      showError('server');
-    }
+        finalizeCardFailures();
   } finally {
   if (currentAbortController === searchController) {
     if (!rateLimitedUntil) {
@@ -1629,6 +1675,7 @@ async function fetchSolBalance(address) {
       return;
     }
 
+    hardFailureOverrideActive = true;
     showError('server');
 
     solBalanceFailed = true;
@@ -1687,7 +1734,8 @@ async function fetchSolBalance(address) {
     show(document.getElementById('solMarketUnavailable'));
     hide(solBalanceUsd);
 
-    showError('server');
+    recordCardFailure('solBalance', 'server');
+    recordCardFailure('market', 'server');
     revealCard(solBalanceRow.closest('.card'));
     return;
   }
@@ -1728,7 +1776,7 @@ async function fetchSolBalance(address) {
     err.className = 'empty-msg';
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
-    await reportBackendErrorType(balanceResponse);
+    await reportBackendErrorType(balanceResponse, 'solBalance');
   }
 
   if (signal?.aborted || rateLimitedUntil) return;
@@ -1768,7 +1816,7 @@ async function fetchSolBalance(address) {
     hide(marketValuesRow2);
     show(marketPlaceholder);
     hide(solBalanceUsd);
-    await reportBackendErrorType(priceResponse);
+    await reportBackendErrorType(priceResponse, 'market');
   }
 
   revealCard(solBalanceRow.closest('.card'));
@@ -1814,11 +1862,13 @@ async function fetchTokens(address) {
     tokenFetchFailed = true;
     tokenDataAvailable = false;
     failedFetchCount++;
+    recordCardFailure('tokens', error?.type || 'server');
     console.error('Token error:', error);
     hideSkeletonShowContent(tokenSkeleton, tokenList);
     hide(tokenTotalSkeleton);
     hide(pieSkeleton);
     const msg = document.createElement('p');
+    msg.id = 'tokenListError';
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load token holdings';
     tokenList.replaceChildren(msg);
@@ -2320,6 +2370,7 @@ async function fetchNFTs(address) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     failedFetchCount++;
+    recordCardFailure('nfts', error?.type || 'server');
 
     console.error('NFT error:', error);
 
@@ -2329,6 +2380,7 @@ async function fetchNFTs(address) {
     hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
 
     const msg = document.createElement('p');
+    msg.id = 'nftListError';
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load NFTs';
 
@@ -2508,6 +2560,7 @@ removeAllById('barChartEmpty');
 
     barDataAvailable = false;
     failedFetchCount++;
+    recordCardFailure('chart', error?.type || 'server');
     console.error('Wallet activity chart error:', error);
 
     hide(barSkeleton);
@@ -2539,6 +2592,7 @@ async function fetchRecentTransactions(address) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     failedFetchCount++;
+    recordCardFailure('recent', error?.type || 'server');
     console.error('Recent transactions error:', error);
 
     hideSkeletonShowContent(txSkeleton, last7txList);
@@ -2546,6 +2600,7 @@ async function fetchRecentTransactions(address) {
     hide(seemore);
 
     const msg = document.createElement('p');
+    msg.id = 'recentTxError';
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load transactions';
     last7txList.replaceChildren(msg);
@@ -2583,6 +2638,7 @@ async function fetchWalletAge(address) {
     solAgeFailed = true;
     walletAgeEl.textContent = 'Age unavailable';
     show(document.getElementById('walletAgeRow'));
+    recordCardFailure('age', error?.type || 'server');
     console.error('Wallet age error:', error);
   }
 }
@@ -2842,11 +2898,25 @@ function renderBarChart(transactions, range, yearCount = 1) {
           borderWidth: 0,
           borderRadius: 0,
           borderSkipped: false,
+          minBarLength: (ctx) => {
+            const value = ctx.chart?.data?.datasets?.[ctx.datasetIndex]?.data?.[ctx.dataIndex];
+            if (!(value > 0)) return 0;
+            const areaHeight = ctx.chart?.chartArea?.height;
+            if (!Number.isFinite(areaHeight) || areaHeight <= 0) return 5; // not laid out yet
+            return Math.max(3, Math.round(areaHeight * 0.015));
+          },
         }],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        onResize: (chart) => {
+          chart.update();
+        },
         plugins: {
           legend: { display: false },
           tooltip: {
