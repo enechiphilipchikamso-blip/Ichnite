@@ -21,9 +21,10 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
-  // sol-price + sol-balance + tokens + nfts + chart + recent + wallet-age — guaranteed base.
+    // sol-price + sol-balance + tokens + nfts + chart + recent + wallet-age — guaranteed base.
   // wallet-age stays dedicated and unchanged; chart and recent are now separate calls.
   TRACE_REQUEST_COST: 7,
+  TRACE_MAX_CONCURRENT_REQUESTS: 3,
   // Transaction rendering can still add /api/token-metadata for the 7 recent rows only.
   TRACE_REQUEST_COST_MAX: 8,
 });
@@ -194,7 +195,6 @@ const TOKEN_COLORS = Object.freeze({
   PYPLx: '#003087',
   MSFTx: '#00A4EF',
   AVGOx: '#CC092F',
-  XAUt0: '#C9A227',
   JPMx: '#117ACA',
   CVXx: '#0056A2',
   GSx: '#7399C6',
@@ -278,6 +278,95 @@ let rateLimitRestoreInFlight = null;
 //AbortController — cancel stale requests
 let currentAbortController = null;
 let liveUpdateAbortController = null;
+
+// Batch 01: keep the fixed trace workload independent while bounding active
+// browser/API requests to the approved maximum of three. Queued work starts
+// immediately when a slot becomes available, and aborted queued work is
+// removed before it can create a network request.
+const traceRequestQueue = [];
+let activeTraceRequestCount = 0;
+
+function createTraceAbortError() {
+  const error = new Error('Trace request aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function pumpTraceRequestQueue() {
+  while (
+    activeTraceRequestCount < CONFIG.TRACE_MAX_CONCURRENT_REQUESTS &&
+    traceRequestQueue.length > 0
+  ) {
+    const job = traceRequestQueue.shift();
+    if (!job) continue;
+
+    if (job.signal?.aborted) {
+      job.cleanup();
+      job.reject(createTraceAbortError());
+      continue;
+    }
+
+    job.started = true;
+    activeTraceRequestCount += 1;
+
+    Promise.resolve()
+      .then(() => {
+        if (job.signal?.aborted) {
+          throw createTraceAbortError();
+        }
+        return job.request();
+      })
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        job.cleanup();
+        activeTraceRequestCount -= 1;
+        pumpTraceRequestQueue();
+      });
+  }
+}
+
+function scheduleTraceRequest(request, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createTraceAbortError());
+      return;
+    }
+
+    const job = {
+      request,
+      signal,
+      resolve,
+      reject,
+      started: false,
+      abortHandler: null,
+      cleanup() {
+        if (this.signal && this.abortHandler) {
+          this.signal.removeEventListener('abort', this.abortHandler);
+          this.abortHandler = null;
+        }
+      },
+    };
+
+    if (signal) {
+      job.abortHandler = () => {
+        if (job.started) return;
+
+        const queueIndex = traceRequestQueue.indexOf(job);
+        if (queueIndex !== -1) {
+          traceRequestQueue.splice(queueIndex, 1);
+        }
+
+        job.cleanup();
+        reject(createTraceAbortError());
+      };
+
+      signal.addEventListener('abort', job.abortHandler, { once: true });
+    }
+
+    traceRequestQueue.push(job);
+    pumpTraceRequestQueue();
+  });
+}
 
 function removeAllById(id) {
   document.querySelectorAll(`[id="${id}"]`).forEach((node) => node.remove());
@@ -1144,15 +1233,16 @@ async function handleResponse(response) {
   const body = await response.json().catch(() => null);
 
   if (response.status === 429) {
-    if (hasValidLockoutResetAt(body)) {
-      enterServerRateLimitState(body);
-      throw { type: 'ratelimit' };
-    }
-
-    hardFailureOverrideActive = true;
-    showError('server');
-    throw { type: 'server' };
+  if (hasValidLockoutResetAt(body)) {
+    enterServerRateLimitState(body);
+    throw { type: 'ratelimit' };
   }
+
+  // An anomalous data-endpoint 429 has no authoritative lockout timestamp.
+  // Treat it as a server failure for the affected card; do not invent a
+  // client lockout or suppress final per-card aggregation.
+  throw { type: 'server' };
+}
 
   if (response.status === 400) {
     hardFailureOverrideActive = true;
@@ -1165,17 +1255,34 @@ async function handleResponse(response) {
 
 async function reportBackendErrorType(response, cardKey) {
   if (rateLimitedUntil || hardFailureOverrideActive) return;
+
   if (!response) {
     recordCardFailure(cardKey, 'server');
     return;
   }
+
   if (response.status === 400) {
     hardFailureOverrideActive = true;
     showError('invalid-address', 'Wallet not found - Invalid Solana Address');
     return;
   }
+
   const body = await response.json().catch(() => null);
+
   if (rateLimitedUntil || hardFailureOverrideActive) return;
+
+  if (response.status === 429) {
+    if (hasValidLockoutResetAt(body)) {
+      enterServerRateLimitState(body);
+      return;
+    }
+
+    // Data-endpoint 429 without an authoritative lockout timestamp:
+    // treat it as a server/card failure rather than creating a client lockout.
+    recordCardFailure(cardKey, 'server');
+    return;
+  }
+
   recordCardFailure(cardKey, classifyBackendErrorResponse(body));
 }
 
@@ -1654,9 +1761,15 @@ async function fetchSolBalance(address) {
   const signal = currentAbortController?.signal;
 
   const [priceResult, balanceResult] = await Promise.allSettled([
-    fetch(`${API_BASE}/api/sol-price`, { signal }),
-    fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
-  ]);
+  scheduleTraceRequest(
+    () => fetch(`${API_BASE}/api/sol-price`, { signal }),
+    signal,
+  ),
+  scheduleTraceRequest(
+    () => fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
+    signal,
+  ),
+]);
 
   if (signal?.aborted) return;
 
@@ -1830,7 +1943,10 @@ async function fetchSolBalance(address) {
 async function fetchTokens(address) {
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/tokens?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/tokens?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
@@ -2339,7 +2455,10 @@ function renderPieHiddenIndicators(hasVisibleSlices) {
 async function fetchNFTs(address) {
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/nfts?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/nfts?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
@@ -2521,7 +2640,10 @@ removeAllById('barChartEmpty');
 
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/transactions/chart?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/transactions/chart?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
@@ -2578,7 +2700,10 @@ removeAllById('barChartEmpty');
 async function fetchRecentTransactions(address) {
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/transactions/recent?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/transactions/recent?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
@@ -2617,7 +2742,10 @@ async function fetchWalletAge(address) {
   const signal = currentAbortController?.signal;
 
   try {
-    const res = await fetch(`${API_BASE}/api/wallet-age?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/wallet-age?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
