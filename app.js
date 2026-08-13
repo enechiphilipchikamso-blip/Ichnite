@@ -368,6 +368,90 @@ function scheduleTraceRequest(request, signal) {
   });
 }
 
+// Batch 02 — in-memory client reuse only. Nothing is persisted to browser
+// storage, so a hard refresh clears these caches normally.
+const CLIENT_TOKEN_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_NFT_CACHE_TTL_MS = 15 * 60 * 1000;
+const CLIENT_NFT_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_CACHE_MAX_ENTRIES = 1000;
+
+const clientTokenMetadataCache = new Map();
+const clientNftCache = new Map();
+const clientNftImageCache = new Map();
+
+function getClientCacheValue(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+
+  if (Date.now() >= entry.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+
+  cache.delete(key);
+  cache.set(key, entry);
+
+  return entry.value;
+}
+
+function setClientCacheValue(cache, key, value, ttlMs) {
+  if (value === undefined || value === null) return;
+
+  cache.delete(key);
+
+  while (cache.size >= CLIENT_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+function primeClientTokenMetadataCache(tokens) {
+  if (!Array.isArray(tokens)) return;
+
+  for (const token of tokens) {
+    const mint = token?.mint?.trim();
+    if (!mint) continue;
+
+    setClientCacheValue(
+      clientTokenMetadataCache,
+      mint,
+      {
+        symbol: token.symbol ?? null,
+        name: token.name ?? null,
+      },
+      CLIENT_TOKEN_METADATA_CACHE_TTL_MS
+    );
+  }
+}
+
+function primeClientNftImageCache(nfts) {
+  if (!Array.isArray(nfts)) return;
+
+  for (const nft of nfts) {
+    const assetId = nft?.id || nft?.assetId || nft?.asset_id;
+    const image =
+      nft?.content?.links?.image ||
+      nft?.content?.files?.[0]?.uri ||
+      nft?.image ||
+      '';
+
+    if (assetId && image) {
+      setClientCacheValue(
+        clientNftImageCache,
+        `asset:${assetId}`,
+        image,
+        CLIENT_NFT_IMAGE_CACHE_TTL_MS
+      );
+    }
+  }
+}
+
 function removeAllById(id) {
   document.querySelectorAll(`[id="${id}"]`).forEach((node) => node.remove());
 }
@@ -1952,6 +2036,7 @@ async function fetchTokens(address) {
     if (signal?.aborted || rateLimitedUntil) return;
 
     allTokens = data.tokens || [];
+    primeClientTokenMetadataCache(allTokens);
 
     if (allTokens.length === 0) {
       tokenDataAvailable = false;
@@ -2453,40 +2538,66 @@ function renderPieHiddenIndicators(hasVisibleSlices) {
 // ════════════════════════════════════════
 
 async function fetchNFTs(address) {
+  const signal = currentAbortController?.signal;
+  const cacheKey = address.trim();
+
   try {
-    const signal = currentAbortController?.signal;
-    const res = await scheduleTraceRequest(
-  () => fetch(`${API_BASE}/api/nfts?address=${address}`, { signal }),
-  signal,
-);
-    const data = await handleResponse(res);
+    let nfts = getClientCacheValue(clientNftCache, cacheKey);
+
+    if (!nfts) {
+      const res = await scheduleTraceRequest(
+        () => fetch(`${API_BASE}/api/nfts?address=${address}`, { signal }),
+        signal,
+      );
+
+      const data = await handleResponse(res);
+
+      if (signal?.aborted || rateLimitedUntil) return;
+
+      nfts = data.nfts || [];
+
+      setClientCacheValue(
+        clientNftCache,
+        cacheKey,
+        nfts,
+        CLIENT_NFT_CACHE_TTL_MS
+      );
+    }
 
     if (signal?.aborted || rateLimitedUntil) return;
 
-    const nfts = data.nfts || [];
+    primeClientNftImageCache(nfts);
 
     if (nfts.length === 0) {
-      nftGrid.replaceChildren(); // clear stale images from a previous successful search
+      nftGrid.replaceChildren();
       hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
+
       const msg = document.createElement('p');
       msg.className = 'empty-msg';
       msg.textContent = 'This wallet has no NFTs';
+
       nftList.replaceChildren(msg);
       revealCard(nftList.closest('.card'));
       return;
     }
 
-    if (signal?.aborted || rateLimitedUntil) return;
-
     nftCountBadge.textContent = nfts.length;
     show(nftCountBadge);
+
     renderNFTList(nfts);
     renderNFTGrid(nfts);
+
     hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
     revealCard(nftList.closest('.card'));
 
   } catch (error) {
-    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
+    if (
+      error?.type === 'ratelimit' ||
+      error?.name === 'AbortError' ||
+      rateLimitedUntil
+    ) {
+      return;
+    }
 
     failedFetchCount++;
     recordCardFailure('nfts', error?.type || 'server');
@@ -2589,7 +2700,18 @@ function renderNFTGrid(nfts) {
   const fragment = document.createDocumentFragment();
   sorted.forEach((nft, index) => {
     const name = nft.content?.metadata?.name || nft.name || 'Unknown NFT';
-    const image = nft.content?.links?.image || nft.content?.files?.[0]?.uri || nft.image || '';
+    const assetId = nft?.id || nft?.assetId || nft?.asset_id;
+
+const image =
+  (assetId &&
+    getClientCacheValue(
+      clientNftImageCache,
+      `asset:${assetId}`
+    )) ||
+  nft.content?.links?.image ||
+  nft.content?.files?.[0]?.uri ||
+  nft.image ||
+  '';
 
     const card = document.createElement('div');
     card.className = 'nft-card';
@@ -2844,22 +2966,54 @@ async function renderRecentTransactions(transactions, options = {}) {
   )];
 
   let txTokenMetadata = new Map();
-  if (txMints.length > 0 && !signal?.aborted && !rateLimitedUntil) {
-    try {
-      const res = await fetch(`${API_BASE}/api/token-metadata?mints=${txMints.join(',')}`, {
-        signal,
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        const data = await res.json();
-        txTokenMetadata = new Map(Object.entries(data.metadata || {}));
-      }
-    } catch (error) {
-      if (error?.name !== 'AbortError') {
-        // fall through to mint-address display
+const missingTxMints = [];
+
+for (const mint of txMints) {
+  const cachedMetadata = getClientCacheValue(
+    clientTokenMetadataCache,
+    mint
+  );
+
+  if (cachedMetadata) {
+    txTokenMetadata.set(mint, cachedMetadata);
+  } else {
+    missingTxMints.push(mint);
+  }
+}
+
+if (
+  missingTxMints.length > 0 &&
+  !signal?.aborted &&
+  !rateLimitedUntil
+) {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/token-metadata?mints=${missingTxMints.join(',')}`,
+      { signal }
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+
+      for (const [mint, metadata] of Object.entries(
+        data.metadata || {}
+      )) {
+        txTokenMetadata.set(mint, metadata);
+
+        setClientCacheValue(
+          clientTokenMetadataCache,
+          mint,
+          metadata,
+          CLIENT_TOKEN_METADATA_CACHE_TTL_MS
+        );
       }
     }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      // fall through to mint-address display
+    }
   }
+}
 
   if (safeTransactions.length === 0) {
     hideSkeletonShowContent(txSkeleton, last7txList);

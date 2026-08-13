@@ -553,6 +553,8 @@ app.use(express.json());
 
 // ── API Keys — loaded from .env — never sent to browser ──
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const HELIUS_BARCHART_TRANSACTION_API_KEY =
+  process.env.HELIUS_BARCHART_TRANSACTION_API_KEY?.trim() || '';
 const JUPITER_API_KEY = process.env.JUPITER_API_KEY;
 const SHYFT_API_KEY = process.env.SHYFT_API_KEY;
 const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY;
@@ -757,15 +759,45 @@ function aggregateTokenAccountsByMint(accounts = []) {
   return [...grouped.values()];
 }
 
-// Stage 1 — Helius DAS getAssetBatch (metadata + price, requires showFungibleTokens)
+// Stage 1 — Helius DAS getAssetBatch (metadata requires showFungibleTokens)
 async function resolveTokenMetadata(mints) {
   const metadataMap = new Map();
   if (mints.length === 0) return metadataMap;
 
+  const normalizedMints = [...new Set(
+    mints.map((mint) => String(mint || '').trim()).filter(Boolean)
+  )];
+
+  const missingMints = [];
+
+  for (const mint of normalizedMints) {
+    const cachedMetadata = getBoundedTtlCacheValue(tokenMetadataCache, mint);
+    const cachedLogo = getBoundedTtlCacheValue(tokenLogoCache, mint);
+
+    if (cachedMetadata || cachedLogo) {
+      metadataMap.set(mint, {
+        ...(cachedMetadata || {
+          symbol: null,
+          name: null,
+          decimals: 0,
+          interface: null,
+        }),
+        logoURI: cachedLogo ?? null,
+      });
+    }
+
+    if (!cachedMetadata || !cachedLogo) {
+      missingMints.push(mint);
+    }
+  }
+
+  if (missingMints.length === 0) return metadataMap;
+
   const CHUNK_SIZE = 1000;
   const chunks = [];
-  for (let i = 0; i < mints.length; i += CHUNK_SIZE) {
-    chunks.push(mints.slice(i, i + CHUNK_SIZE));
+
+  for (let i = 0; i < missingMints.length; i += CHUNK_SIZE) {
+    chunks.push(missingMints.slice(i, i + CHUNK_SIZE));
   }
 
   await Promise.allSettled(
@@ -782,29 +814,54 @@ async function resolveTokenMetadata(mints) {
               method: 'getAssetBatch',
               params: {
                 ids: chunk,
-                displayOptions: { showFungible: true }, // REQUIRED for token_info/price_info
+                displayOptions: { showFungible: true },
               },
             }),
           }
         );
 
         const assets = Array.isArray(data.result) ? data.result : [];
+
         for (const asset of assets) {
-          if (!asset || !asset.id) continue;
+          if (!asset?.id) continue;
+
           const meta = asset.content?.metadata || {};
           const image =
             asset.content?.links?.image ||
             asset.content?.files?.[0]?.uri ||
             null;
+
           const tokenInfo = asset.token_info || {};
 
-          metadataMap.set(asset.id, {
+          const metadata = {
             symbol: meta.symbol || tokenInfo.symbol || null,
             name: meta.name || null,
-            logoURI: image,
-            decimals: typeof tokenInfo.decimals === 'number' ? tokenInfo.decimals : 0,
+            decimals:
+              typeof tokenInfo.decimals === 'number'
+                ? tokenInfo.decimals
+                : 0,
             interface: asset.interface || null,
-            // Metadata only — pricing now comes exclusively from Jupiter (primary) / Raydium (fallback)
+          };
+
+          setBoundedTtlCacheValue(
+            tokenMetadataCache,
+            asset.id,
+            metadata,
+            TOKEN_METADATA_CACHE_TTL_MS
+          );
+
+          if (image) {
+            setBoundedTtlCacheValue(
+              tokenLogoCache,
+              asset.id,
+              image,
+              TOKEN_LOGO_CACHE_TTL_MS
+            );
+          }
+
+          metadataMap.set(asset.id, {
+            ...metadata,
+            logoURI: image || null,
           });
         }
       } catch (err) {
@@ -1081,12 +1138,28 @@ app.get('/api/nfts', async (req, res) => {
     return res.status(400).json({ error: 'Invalid Solana wallet address.' });
   }
 
+  const normalizedAddress = address.trim();
+  const providerPrefix = HELIUS_API_KEY
+    ? 'helius'
+    : SHYFT_API_KEY
+      ? 'shyft'
+      : 'none';
+
+  const cacheKey = `${providerPrefix}:${normalizedAddress}`;
+  const cached = getBoundedTtlCacheValue(nftDataCache, cacheKey);
+
+  if (cached) {
+    return res.json({
+      nfts: cached,
+      cached: true,
+    });
+  }
+
   try {
-    let data;
+    let nfts;
 
     if (HELIUS_API_KEY) {
-      // Primary — Helius DAS API
-      data = await safeFetch(
+      const data = await safeFetch(
         `https://beta.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
         {
           method: 'POST',
@@ -1096,7 +1169,7 @@ app.get('/api/nfts', async (req, res) => {
             id: 1,
             method: 'getAssetsByOwner',
             params: {
-              ownerAddress: address.trim(),
+              ownerAddress: normalizedAddress,
               page: 1,
               limit: 100,
             },
@@ -1104,57 +1177,232 @@ app.get('/api/nfts', async (req, res) => {
         }
       );
 
-      res.json({
-        nfts: data.result?.items || [],
-      });
+      nfts = data.result?.items || [];
     } else if (SHYFT_API_KEY) {
-      // Backup — Shyft API
-      data = await safeFetch(
-        `https://api.shyft.to/sol/v1/nft/read_all?network=mainnet-beta&address=${address.trim()}`,
+      const data = await safeFetch(
+        `https://api.shyft.to/sol/v1/nft/read_all?network=mainnet-beta&address=${normalizedAddress}`,
         {
           headers: { 'x-api-key': SHYFT_API_KEY },
         }
       );
 
-      res.json({
-        nfts: data.result || [],
-      });
+      nfts = data.result || [];
     } else {
       return res.status(503).json({
         error: 'No API key configured. Please add HELIUS_API_KEY to .env',
       });
     }
+
+    rememberNftImageSources(nfts);
+
+    const responseNfts = applyCachedNftImageSources(nfts);
+
+    setBoundedTtlCacheValue(
+      nftDataCache,
+      cacheKey,
+      responseNfts,
+      NFT_DATA_CACHE_TTL_MS
+    );
+
+    return res.json({ nfts: responseNfts });
   } catch (error) {
     console.error('NFT error:', error.message);
-    return sendUpstreamFailure(res, error, 'Unable to fetch NFTs. Please try again shortly.');
+    return sendUpstreamFailure(
+      res,
+      error,
+      'Unable to fetch NFTs. Please try again shortly.'
+    );
   }
 });
 
-const HELIUS_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(process.env.HELIUS_MAX_TX_PAGES, 50); // 50 × 1000 = 50,000 tx cap
-const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(process.env.HELIUS_TX_TIME_BUDGET_MS, 20000);
-const HELIUS_CHART_PAGE_DELAY_MS = parsePositiveIntEnv(process.env.HELIUS_CHART_PAGE_DELAY_MS, 200);
-const HELIUS_MAX_PAGE_RETRIES = parsePositiveIntEnv(process.env.HELIUS_MAX_PAGE_RETRIES, 3);
-const HELIUS_RETRY_BASE_DELAY_MS = parsePositiveIntEnv(process.env.HELIUS_RETRY_BASE_DELAY_MS, 500);
-const HELIUS_CHART_CACHE_TTL_MS = parsePositiveIntEnv(process.env.HELIUS_CHART_CACHE_TTL_MS, 90000);
-const HELIUS_CHART_CACHE_MAX_ENTRIES = 200;
+// Batch 02 — bounded in-memory TTL caches. Redis persistence for these caches
+// remains explicitly deferred post-MVP.
+const SERVER_CACHE_MAX_ENTRIES = 1000;
+const TOKEN_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const TOKEN_LOGO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const NFT_DATA_CACHE_TTL_MS = 15 * 60 * 1000;
+const NFT_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function getBoundedTtlCacheValue(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+
+  if (Date.now() >= entry.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+
+  cache.delete(key);
+  cache.set(key, entry);
+  return entry.value;
+}
+
+function setBoundedTtlCacheValue(
+  cache,
+  key,
+  value,
+  ttlMs,
+  maxEntries = SERVER_CACHE_MAX_ENTRIES
+) {
+  if (value === undefined || value === null) return;
+
+  cache.delete(key);
+
+  while (cache.size >= maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+const tokenMetadataCache = new Map();
+const tokenLogoCache = new Map();
+const nftDataCache = new Map();
+const nftImageCache = new Map();
+
+function rememberNftImageSources(nfts) {
+  if (!Array.isArray(nfts)) return;
+
+  for (const nft of nfts) {
+    const assetId = nft?.id || nft?.assetId || nft?.asset_id;
+    const image =
+      nft?.content?.links?.image ||
+      nft?.content?.files?.[0]?.uri ||
+      nft?.image ||
+      null;
+
+    if (assetId && image) {
+      setBoundedTtlCacheValue(
+        nftImageCache,
+        `asset:${assetId}`,
+        image,
+        NFT_IMAGE_CACHE_TTL_MS
+      );
+    }
+  }
+}
+
+function applyCachedNftImageSources(nfts) {
+  if (!Array.isArray(nfts)) return [];
+
+  return nfts.map((nft) => {
+    const assetId = nft?.id || nft?.assetId || nft?.asset_id;
+    if (!assetId) return nft;
+
+    const existingImage =
+      nft?.content?.links?.image ||
+      nft?.content?.files?.[0]?.uri ||
+      nft?.image ||
+      null;
+
+    if (existingImage) return nft;
+
+    const cachedImage = getBoundedTtlCacheValue(
+      nftImageCache,
+      `asset:${assetId}`
+    );
+
+    if (!cachedImage) return nft;
+
+    return {
+      ...nft,
+      content: {
+        ...(nft.content || {}),
+        links: {
+          ...(nft.content?.links || {}),
+          image: cachedImage,
+        },
+      },
+    };
+  });
+}
+
+const HELIUS_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(
+  process.env.HELIUS_MAX_TX_PAGES,
+  75
+);
+
+const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(
+  process.env.HELIUS_TX_TIME_BUDGET_MS,
+  20000
+);
+
+const HELIUS_CHART_PAGE_DELAY_MS = parsePositiveIntEnv(
+  process.env.HELIUS_CHART_PAGE_DELAY_MS,
+  150
+);
+
+const HELIUS_MAX_PAGE_RETRIES = parsePositiveIntEnv(
+  process.env.HELIUS_MAX_PAGE_RETRIES,
+  3
+);
+
+const HELIUS_RETRY_BASE_DELAY_MS = parsePositiveIntEnv(
+  process.env.HELIUS_RETRY_BASE_DELAY_MS,
+  1000
+);
+
+const HELIUS_CHART_CACHE_TTL_MS = parsePositiveIntEnv(
+  process.env.HELIUS_CHART_CACHE_TTL_MS,
+  90000
+);
+
+const HELIUS_CHART_CACHE_MAX_ENTRIES = parsePositiveIntEnv(
+  process.env.HELIUS_CHART_CACHE_MAX_ENTRIES,
+  200
+);
+
 const heliusChartResultCache = new Map();
 
 function getCachedChartResult(cacheKey) {
   const entry = heliusChartResultCache.get(cacheKey);
   if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
+
+  if (Date.now() >= entry.expiresAt) {
     heliusChartResultCache.delete(cacheKey);
     return null;
   }
+
+  heliusChartResultCache.delete(cacheKey);
+  heliusChartResultCache.set(cacheKey, entry);
+
   return entry.data;
 }
 
 function setCachedChartResult(cacheKey, data) {
-  if (heliusChartResultCache.size >= HELIUS_CHART_CACHE_MAX_ENTRIES) {
+  heliusChartResultCache.delete(cacheKey);
+
+  while (heliusChartResultCache.size >= HELIUS_CHART_CACHE_MAX_ENTRIES) {
     const oldestKey = heliusChartResultCache.keys().next().value;
-    if (oldestKey !== undefined) heliusChartResultCache.delete(oldestKey);
+    if (oldestKey === undefined) break;
+    heliusChartResultCache.delete(oldestKey);
   }
-  heliusChartResultCache.set(cacheKey, { data, expiresAt: Date.now() + HELIUS_CHART_CACHE_TTL_MS });
+
+  heliusChartResultCache.set(cacheKey, {
+    data,
+    expiresAt: Date.now() + HELIUS_CHART_CACHE_TTL_MS,
+  });
+}
+
+const HELIUS_CHART_API_KEY = HELIUS_BARCHART_TRANSACTION_API_KEY || (
+  NODE_ENV === 'development' ? HELIUS_API_KEY : ''
+);
+
+if (!HELIUS_BARCHART_TRANSACTION_API_KEY) {
+  if (NODE_ENV === 'development' && HELIUS_API_KEY) {
+    console.warn(
+      '⚠️ Dedicated Helius chart key is not configured; development is explicitly falling back to HELIUS_API_KEY for chart pagination.'
+    );
+  } else {
+    console.warn(
+      '⚠️ Dedicated Helius chart key is not configured; wallet-activity chart pagination is disabled outside development until HELIUS_BARCHART_TRANSACTION_API_KEY is provided.'
+    );
+  }
 }
 
 // ── Transaction history helpers ──
@@ -1204,32 +1452,63 @@ function normalizeTransactionList(payload) {
 }
 
 // Helius JSON-RPC helper for getTransactionsForAddress
-async function fetchHeliusTransactionsForAddress(address, heliusOptions) {
-  const data = await safeFetch(`https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: '1',
-      method: 'getTransactionsForAddress',
-      params: [address, heliusOptions],
-    }),
-  });
+async function fetchHeliusTransactionsForAddress(
+  address,
+  heliusOptions,
+  apiKey = HELIUS_API_KEY
+) {
+  const data = await safeFetch(
+    `https://mainnet.helius-rpc.com/?api-key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: '1',
+        method: 'getTransactionsForAddress',
+        params: [address, heliusOptions],
+      }),
+    }
+  );
 
   return data;
 }
 
-async function fetchHeliusTransactionsForAddressWithRetry(address, heliusOptions) {
+async function fetchHeliusTransactionsForAddressWithRetry(
+  address,
+  heliusOptions,
+  apiKey = HELIUS_API_KEY
+) {
   let attempt = 0;
+
   for (;;) {
     try {
-      return await fetchHeliusTransactionsForAddress(address, heliusOptions);
+      return await fetchHeliusTransactionsForAddress(
+        address,
+        heliusOptions,
+        apiKey
+      );
     } catch (error) {
-      const isRateLimited = error instanceof UpstreamError && error.status === 429;
-      if (!isRateLimited || attempt >= HELIUS_MAX_PAGE_RETRIES) throw error;
+      const isRateLimited =
+        error instanceof UpstreamError && error.status === 429;
+
+      if (
+        !isRateLimited ||
+        attempt >= HELIUS_MAX_PAGE_RETRIES
+      ) {
+        throw error;
+      }
+
       attempt += 1;
-      const backoffMs = HELIUS_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
-      console.warn(`Helius 429 on this page — retrying in ${backoffMs}ms (attempt ${attempt}/${HELIUS_MAX_PAGE_RETRIES})`);
+
+      const backoffMs =
+        HELIUS_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+
+      console.warn(
+        `Helius 429 on this page — retrying in ${backoffMs}ms ` +
+        `(attempt ${attempt}/${HELIUS_MAX_PAGE_RETRIES})`
+      );
+
       await sleep(backoffMs);
     }
   }
@@ -1270,7 +1549,11 @@ async function fetchHeliusChartTransactions(address, cutoffTimestamp) {
 
     let payload;
     try {
-      payload = await fetchHeliusTransactionsForAddressWithRetry(address, heliusOptions);
+      payload = await fetchHeliusTransactionsForAddressWithRetry(
+  address,
+  heliusOptions,
+  HELIUS_CHART_API_KEY
+);
     } catch (error) {
       if (page === 0) throw error;
       console.warn(`Helius chart pagination stopped after ${page} page(s) — ${error.message}`);
@@ -1349,11 +1632,12 @@ app.get('/api/transactions/chart', async (req, res) => {
   const cutoffTimestamp = getHistoryCutoffTimestamp(years);
   const normalizedAddress = address.trim();
 
-  if (!HELIUS_API_KEY) {
-    return res.status(503).json({
-      error: 'No API key configured. Please add HELIUS_API_KEY to .env',
-    });
-  }
+  if (!HELIUS_CHART_API_KEY) {
+  return res.status(503).json({
+    error:
+      'No dedicated Helius chart key configured. Please add HELIUS_BARCHART_TRANSACTION_API_KEY to .env',
+  });
+}
 
   try {
     const cacheKey = `${normalizedAddress}:${cutoffTimestamp ?? 'all'}`;
@@ -1497,6 +1781,25 @@ app.listen(PORT, () => {
   
   console.log(`✅ Ichnite server running on http://localhost:${PORT}`);
   console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'} (metadata + fallback structural data)`);
+  console.log(
+  `📊 Helius chart API: ${
+    HELIUS_BARCHART_TRANSACTION_API_KEY
+      ? 'Dedicated key'
+      : NODE_ENV === 'development' && HELIUS_API_KEY
+        ? 'Development fallback to HELIUS_API_KEY'
+        : '⚠️  Not configured'
+  } (wallet activity pagination)`
+);
+
+console.log(
+  `📊 Helius chart tuning: delay=${HELIUS_CHART_PAGE_DELAY_MS}ms, ` +
+  `retryBase=${HELIUS_RETRY_BASE_DELAY_MS}ms, ` +
+  `retries=${HELIUS_MAX_PAGE_RETRIES}, ` +
+  `timeBudget=${HELIUS_TX_TIME_BUDGET_MS}ms, ` +
+  `maxPages=${HELIUS_MAX_TRANSACTION_PAGES}, ` +
+  `cacheTTL=${HELIUS_CHART_CACHE_TTL_MS}ms, ` +
+  `cacheEntries=${HELIUS_CHART_CACHE_MAX_ENTRIES}`
+);
   console.log(`🔑 Shyft API: ${SHYFT_API_KEY ? 'Connected' : '⚠️  Not configured'} (structural data fallback only)`);
   console.log(`🔑 Jupiter Price V3: ${JUPITER_API_KEY ? 'Keyed (1 req/sec)' : 'Keyless (0.5 req/sec)'} (primary token pricing)`);
   console.log(`🔑 Raydium V3: Unauthenticated (fallback token pricing)`);
