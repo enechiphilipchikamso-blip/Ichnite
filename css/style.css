@@ -839,6 +839,155 @@ grid-template-columns: repeat(4, 1fr);
 } 
 */
 
+/* ── Feedback Widget ── */
+#feedbackLandingMount,
+#feedbackResultsMount {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.feedback-widget {
+  width: min(100%, 640px);
+  margin: 18px auto 10px;
+  background: #12121a;
+  border: 1.5px solid #7c5cfc;
+  border-radius: 50px;
+  padding: 8px;
+}
+
+.feedback-widget.is-open {
+  border-radius: 20px;
+  padding: 10px 14px 14px;
+}
+
+.feedback-toggle {
+  display: block;
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 24px;
+  border: 0;
+  border-radius: 50px;
+  background: transparent;
+  color: #7c5cfc;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(1rem, 2.6vw, 1.15rem);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  outline: none;
+}
+
+.feedback-toggle:focus-visible {
+  box-shadow: 0 0 0 2px #3b82f6;
+}
+
+.feedback-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px 0;
+}
+
+.feedback-content textarea {
+  width: 100%;
+  min-height: 190px;
+  resize: vertical;
+  background: #1a1a26;
+  color: #ffffff;
+  border: 1.5px solid #7c5cfc;
+  border-radius: 16px;
+  padding: 16px;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  outline: none;
+}
+
+.feedback-content textarea::placeholder {
+  color: rgba(124, 92, 252, 0.7);
+  opacity: 1;
+}
+
+.feedback-content textarea:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.25);
+}
+
+.feedback-content textarea:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.feedback-helper {
+  margin: 0;
+  min-height: 26px;
+  color: #7c5cfc;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.feedback-send-btn {
+  align-self: flex-end;
+  min-width: 116px;
+  background: #7c5cfc;
+  color: #ffffff;
+  border: none;
+  border-radius: 12px;
+  padding: 11px 22px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+
+.feedback-send-btn:active {
+  background: #6d50e8;
+}
+
+.feedback-send-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+.feedback-send-btn .btn-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  vertical-align: -3px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.feedback-honeypot {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.feedback-helper.feedback-error {
+  color: #ff4d4d;
+}
+
+.feedback-helper.feedback-success {
+  color: #22c55e;
+}
+
+.feedback-helper.feedback-warning {
+  color: #f97316;
+}
+
 /* ── Small Tablet and Large Phone ── */
 @media only screen and (min-width: 600px) {
   body {

@@ -279,6 +279,13 @@ let rateLimitRestoreInFlight = null;
 let currentAbortController = null;
 let liveUpdateAbortController = null;
 
+// Batch 03: feedback widget state is intentionally in-memory only.
+let feedbackIsOpen = false;
+let feedbackHelperResetTimer = null;
+let feedbackPageLoadedAt = Date.now();
+let feedbackFocusedAt = null;
+let feedbackSubmitting = false;
+
 // Batch 01: keep the fixed trace workload independent while bounding active
 // browser/API requests to the approved maximum of three. Queued work starts
 // immediately when a slot becomes available, and aborted queued work is
@@ -529,6 +536,16 @@ const accordionBtns = document.querySelectorAll('.accordion-btn');
 const infoAccordions = document.querySelectorAll('.accordion.full-width');
 const footerYearEl = document.getElementById('footerYear');
 if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
+const feedbackWidget = document.getElementById('feedbackWidget');
+const feedbackForm = document.getElementById('feedbackForm');
+const feedbackToggle = document.getElementById('feedbackToggle');
+const feedbackContent = document.getElementById('feedbackContent');
+const feedbackText = document.getElementById('feedbackText');
+const feedbackWebsite = document.getElementById('feedbackWebsite');
+const feedbackHelper = document.getElementById('feedbackHelper');
+const feedbackSend = document.getElementById('feedbackSend');
+const feedbackLandingMount = document.getElementById('feedbackLandingMount');
+const feedbackResultsMount = document.getElementById('feedbackResultsMount');
 
 // ════════════════════════════════════════
 // ── 7. SERVICE WORKER REGISTRATION ──
@@ -1648,6 +1665,7 @@ removePieHiddenIndicators();
   document.title = 'Ichnite';
     void restorePersistedRateLimitCountdownIfNeeded();
   resetBarToggleState();
+  setFeedbackPageType('landing');
   walletInput.focus();
 }
 
@@ -1757,6 +1775,7 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
     walletInput.classList.remove('input-valid');
   }, 5000);
 
+  setFeedbackPageType('results');
   showAllSkeletons();
   if (tokenSearch) tokenSearch.value = '';
 
@@ -3673,3 +3692,282 @@ window.addEventListener('pageshow', () => {
 
 renderSearchHistory();
 void restorePersistedRateLimitCountdownOnce();
+
+// ════════════════════════════════════════
+// ── 32. FEEDBACK WIDGET ──
+// ════════════════════════════════════════
+
+const FEEDBACK_DEFAULT_HELPER =
+  'Send us feedback, suggestions, or bug reports.';
+
+const FEEDBACK_EMPTY_MESSAGE =
+  'Please enter your feedback';
+
+const FEEDBACK_SUCCESS_MESSAGE =
+  'Thanks for your feedback!';
+
+const FEEDBACK_FAILURE_MESSAGE =
+  'Unable to send feedback, please try again later';
+
+const FEEDBACK_TOO_FAST_MESSAGE =
+  'You are submitting too fast. Please wait a moment and try again.';
+
+const FEEDBACK_HELPER_RESET_MS = 5000;
+const FEEDBACK_TIMING_THRESHOLD_MS = 2500;
+
+function clearFeedbackHelperResetTimer() {
+  if (feedbackHelperResetTimer) {
+    clearTimeout(feedbackHelperResetTimer);
+    feedbackHelperResetTimer = null;
+  }
+}
+
+function setFeedbackHelper(
+  message,
+  tone = 'default',
+  resetAfterMs = 0
+) {
+  if (!feedbackHelper) return;
+
+  clearFeedbackHelperResetTimer();
+
+  feedbackHelper.textContent = message;
+
+  feedbackHelper.classList.remove(
+    'feedback-error',
+    'feedback-success',
+    'feedback-warning'
+  );
+
+  if (tone === 'error') {
+    feedbackHelper.classList.add('feedback-error');
+  }
+
+  if (tone === 'success') {
+    feedbackHelper.classList.add('feedback-success');
+  }
+
+  if (tone === 'warning') {
+    feedbackHelper.classList.add('feedback-warning');
+  }
+
+  if (resetAfterMs > 0) {
+    feedbackHelperResetTimer = setTimeout(() => {
+      setFeedbackHelper(FEEDBACK_DEFAULT_HELPER);
+    }, resetAfterMs);
+  }
+}
+
+function closeFeedbackWidget({
+  preserveDraft = true,
+} = {}) {
+  feedbackIsOpen = false;
+
+  feedbackWidget?.classList.remove('is-open');
+  feedbackToggle?.setAttribute('aria-expanded', 'false');
+
+  if (feedbackContent) {
+    hide(feedbackContent);
+  }
+
+  if (!preserveDraft && feedbackText) {
+    feedbackText.value = '';
+  }
+}
+
+function openFeedbackWidget() {
+  feedbackIsOpen = true;
+
+  feedbackWidget?.classList.add('is-open');
+  feedbackToggle?.setAttribute('aria-expanded', 'true');
+
+  show(feedbackContent);
+}
+
+function setFeedbackPageType(pageType) {
+  closeFeedbackWidget({
+    preserveDraft: true,
+  });
+
+  const mount =
+    pageType === 'results'
+      ? feedbackResultsMount
+      : feedbackLandingMount;
+
+  if (
+    feedbackWidget &&
+    mount &&
+    feedbackWidget.parentElement !== mount
+  ) {
+    mount.appendChild(feedbackWidget);
+  }
+}
+
+function isFeedbackTooFast() {
+  const now = Date.now();
+
+  const pageLoadTooFast =
+    Number.isFinite(feedbackPageLoadedAt) &&
+    now - feedbackPageLoadedAt <
+      FEEDBACK_TIMING_THRESHOLD_MS;
+
+  const focusTooFast =
+    Number.isFinite(feedbackFocusedAt) &&
+    now - feedbackFocusedAt <
+      FEEDBACK_TIMING_THRESHOLD_MS;
+
+  return pageLoadTooFast || focusTooFast;
+}
+
+function setFeedbackSubmitting(isSubmitting) {
+  feedbackSubmitting = isSubmitting;
+
+  if (feedbackSend) {
+    feedbackSend.disabled = isSubmitting;
+
+    feedbackSend.innerHTML = isSubmitting
+      ? '<span class="btn-spinner"></span> Sending…'
+      : 'Send';
+  }
+
+  if (feedbackText) {
+    feedbackText.disabled = isSubmitting;
+  }
+}
+
+async function submitFeedback() {
+  if (!feedbackText || feedbackSubmitting) return;
+
+  const feedback = feedbackText.value.trim();
+
+  if (!feedback) {
+    setFeedbackHelper(
+      FEEDBACK_EMPTY_MESSAGE,
+      'error',
+      FEEDBACK_HELPER_RESET_MS
+    );
+    return;
+  }
+
+  if (isFeedbackTooFast()) {
+    setFeedbackHelper(
+      FEEDBACK_TOO_FAST_MESSAGE,
+      'warning',
+      FEEDBACK_HELPER_RESET_MS
+    );
+    return;
+  }
+
+  clearFeedbackHelperResetTimer();
+  setFeedbackHelper(FEEDBACK_DEFAULT_HELPER);
+  setFeedbackSubmitting(true);
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/feedback`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          feedback,
+          website: feedbackWebsite?.value || '',
+          pageLoadedAt: feedbackPageLoadedAt,
+          focusedAt: feedbackFocusedAt,
+        }),
+      }
+    );
+
+    const payload =
+      await response.json().catch(() => ({}));
+
+    if (response.ok && payload.success) {
+      setFeedbackHelper(
+        FEEDBACK_SUCCESS_MESSAGE,
+        'success',
+        FEEDBACK_HELPER_RESET_MS
+      );
+
+      feedbackText.value = '';
+      return;
+    }
+
+    if (
+      response.status === 422 &&
+      payload.code === 'too-fast'
+    ) {
+      setFeedbackHelper(
+        FEEDBACK_TOO_FAST_MESSAGE,
+        'warning',
+        FEEDBACK_HELPER_RESET_MS
+      );
+      return;
+    }
+
+    if (
+      response.status === 400 &&
+      payload.code === 'empty-feedback'
+    ) {
+      setFeedbackHelper(
+        FEEDBACK_EMPTY_MESSAGE,
+        'error',
+        FEEDBACK_HELPER_RESET_MS
+      );
+      return;
+    }
+
+    setFeedbackHelper(
+      FEEDBACK_FAILURE_MESSAGE,
+      'warning',
+      FEEDBACK_HELPER_RESET_MS
+    );
+  } catch {
+    setFeedbackHelper(
+      FEEDBACK_FAILURE_MESSAGE,
+      'warning',
+      FEEDBACK_HELPER_RESET_MS
+    );
+  } finally {
+    setFeedbackSubmitting(false);
+  }
+}
+
+if (
+  feedbackWidget &&
+  feedbackForm &&
+  feedbackToggle &&
+  feedbackText
+) {
+  setFeedbackPageType('landing');
+
+  feedbackToggle.addEventListener('click', () => {
+    if (feedbackSubmitting) return;
+
+    if (feedbackIsOpen) {
+      closeFeedbackWidget({
+        preserveDraft: true,
+      });
+    } else {
+      openFeedbackWidget();
+    }
+  });
+
+  feedbackText.addEventListener('focus', () => {
+    feedbackFocusedAt = Date.now();
+  });
+
+  feedbackText.addEventListener('input', () => {
+    setFeedbackHelper(
+      FEEDBACK_DEFAULT_HELPER
+    );
+  });
+
+  feedbackForm.addEventListener(
+    'submit',
+    (event) => {
+      event.preventDefault();
+      void submitFeedback();
+    }
+  );
+}

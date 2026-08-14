@@ -12,6 +12,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import fetch from 'node-fetch';
 import net from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { Redis } from '@upstash/redis';
 
 // ── Validate required environment variables on startup ──
@@ -39,6 +40,14 @@ const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || '';
 const REDIS_KEY_PREFIX = (process.env.REDIS_KEY_PREFIX || 'ichnite:rate-limit:').trim() || 'ichnite:rate-limit:';
 const REDIS_BACKUP_ENABLED = Boolean(REDIS_URL && REDIS_TOKEN);
 const redis = REDIS_BACKUP_ENABLED ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN }) : null;
+const FEEDBACK_REDIS_KEY_PREFIX =
+  (process.env.FEEDBACK_REDIS_KEY_PREFIX || 'ichnite:feedback:').trim() || 'ichnite:feedback:';
+
+const BREVO_API_KEY = process.env.BREVO_API_KEY?.trim() || '';
+const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || '';
+const FEEDBACK_RECIPIENT_EMAIL = process.env.FEEDBACK_RECIPIENT_EMAIL?.trim() || '';
+const FEEDBACK_SENDER_EMAIL = process.env.FEEDBACK_SENDER_EMAIL?.trim() || '';
+const FEEDBACK_SENDER_NAME = process.env.FEEDBACK_SENDER_NAME?.trim() || 'Ichnite';
 
 function isValidTrustProxyToken(token) {
   const value = token.trim();
@@ -612,6 +621,255 @@ function sendUpstreamFailure(res, error, fallbackMessage) {
     payload.headline = 'Solana network is experiencing delays. Please try again shortly.';
   }
   return res.status(503).json(payload);
+}
+
+// ── Feedback configuration / validation helpers ──
+const FEEDBACK_TIMING_THRESHOLD_MS = 2500;
+const FEEDBACK_DATE_LOCALE = 'en-CA';
+
+const FEEDBACK_BLOCKLIST = [
+  'casino',
+  'online casino',
+  'sportsbook',
+  'sports betting',
+  'betting bonus',
+  'casino bonus',
+  'poker bonus',
+  'blackjack bonus',
+
+  'porn',
+  'xxx',
+  'sex cam',
+  'webcam girl',
+  'escort service',
+  'adult dating',
+
+  'guaranteed returns',
+  'guaranteed profit',
+  'double your bitcoin',
+  'double your crypto',
+  'send 1 get 2',
+  'investment opportunity',
+  'limited time investment',
+  'crypto giveaway',
+  'token giveaway',
+  'airdrop claim',
+  'free crypto',
+  'instant withdrawal',
+  'passive income opportunity',
+
+  'seo services',
+  'buy backlinks',
+  'link building',
+  'guest post',
+  'sponsored post',
+  'rank your website',
+  'digital marketing agency',
+  'web design agency',
+  'social media marketing service',
+
+  'viagra',
+  'cialis',
+  'levitra',
+  'buy pills',
+  'cheap pharmacy',
+];
+
+function normalizeFeedbackText(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function feedbackPhraseMatches(text, phrase) {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i');
+  return pattern.test(text);
+}
+
+function feedbackContainsBlockedContent(text) {
+  if (/https?:\/\/|www\./i.test(text)) return true;
+
+  return FEEDBACK_BLOCKLIST.some((phrase) =>
+    feedbackPhraseMatches(text, phrase)
+  );
+}
+
+function getFeedbackCounterKey() {
+  return `${FEEDBACK_REDIS_KEY_PREFIX}sequence`;
+}
+
+function getFeedbackDateLabel() {
+  return new Date().toLocaleDateString(FEEDBACK_DATE_LOCALE);
+}
+
+function classifyFeedbackProviderFailure(error) {
+  if (!error) return 'unknown';
+
+  if (error instanceof UpstreamError) {
+    if (error.status === 402) return 'quota';
+    if (error.status === 429) return 'rate-limit';
+    if (error.status >= 500) return 'provider-5xx';
+
+    if (
+      error.status === 400 ||
+      error.status === 401 ||
+      error.status === 403
+    ) {
+      return `provider-${error.status}`;
+    }
+
+    return `provider-${error.status}`;
+  }
+
+  return 'network-or-runtime';
+}
+
+async function sendFeedbackWithBrevo(feedback, subject) {
+  if (
+    !BREVO_API_KEY ||
+    !FEEDBACK_RECIPIENT_EMAIL ||
+    !FEEDBACK_SENDER_EMAIL
+  ) {
+    throw new Error('Brevo feedback configuration is incomplete.');
+  }
+
+  const response = await fetch(
+    'https://api.brevo.com/v3/smtp/email',
+    {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'api-key': BREVO_API_KEY,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: {
+          email: FEEDBACK_SENDER_EMAIL,
+          name: FEEDBACK_SENDER_NAME,
+        },
+        to: [
+          {
+            email: FEEDBACK_RECIPIENT_EMAIL,
+          },
+        ],
+        subject,
+        textContent: feedback,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new UpstreamError(
+      `Brevo API error: ${response.status}`,
+      response.status
+    );
+  }
+
+  return response.json().catch(() => ({}));
+}
+
+async function sendFeedbackWithResend(feedback, subject) {
+  if (
+    !RESEND_API_KEY ||
+    !FEEDBACK_RECIPIENT_EMAIL ||
+    !FEEDBACK_SENDER_EMAIL
+  ) {
+    throw new Error('Resend feedback configuration is incomplete.');
+  }
+
+  const response = await fetch(
+    'https://api.resend.com/emails',
+    {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${RESEND_API_KEY}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FEEDBACK_SENDER_NAME
+          ? `${FEEDBACK_SENDER_NAME} <${FEEDBACK_SENDER_EMAIL}>`
+          : FEEDBACK_SENDER_EMAIL,
+        to: [FEEDBACK_RECIPIENT_EMAIL],
+        subject,
+        text: feedback,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    throw new UpstreamError(
+      `Resend API error: ${response.status}`,
+      response.status
+    );
+  }
+
+  return response.json().catch(() => ({}));
+}
+
+async function deliverFeedback(feedback, subject, correlationId) {
+  let brevoFailure = null;
+
+  try {
+    await sendFeedbackWithBrevo(feedback, subject);
+
+    return {
+      delivered: true,
+      provider: 'brevo',
+    };
+  } catch (error) {
+    brevoFailure = error;
+
+    console.warn('Feedback Brevo delivery failed:', {
+      correlationId,
+      category: classifyFeedbackProviderFailure(error),
+    });
+  }
+
+  const brevoCategory = classifyFeedbackProviderFailure(brevoFailure);
+
+  const shouldFallback =
+    !brevoFailure ||
+    brevoCategory === 'quota' ||
+    brevoCategory === 'rate-limit' ||
+    brevoCategory === 'provider-5xx' ||
+    brevoCategory === 'network-or-runtime';
+
+  if (!shouldFallback) {
+    return {
+      delivered: false,
+      bothProvidersFailed: false,
+      configurationOrValidationFailure: true,
+    };
+  }
+
+  try {
+    await sendFeedbackWithResend(feedback, subject);
+
+    return {
+      delivered: true,
+      provider: 'resend',
+    };
+  } catch (resendError) {
+    console.error(
+      'CRITICAL: feedback delivery failed through both providers.',
+      {
+        correlationId,
+        brevo: classifyFeedbackProviderFailure(brevoFailure),
+        resend: classifyFeedbackProviderFailure(resendError),
+      }
+    );
+
+    return {
+      delivered: false,
+      bothProvidersFailed: true,
+      brevoCategory,
+      resendCategory: classifyFeedbackProviderFailure(resendError),
+    };
+  }
 }
 
 // ════════════════════════════════════════
@@ -1754,6 +2012,147 @@ app.get('/api/token-logo-fallback', (req, res) => {
   `);
 });
 
+// ── Route 10 — POST /api/feedback ──
+// Accepts anonymous feedback after the server-side spam checks have passed.
+app.post('/api/feedback', async (req, res) => {
+  const feedback =
+    typeof req.body?.feedback === 'string'
+      ? req.body.feedback.trim()
+      : '';
+
+  const honeypot =
+    typeof req.body?.website === 'string'
+      ? req.body.website.trim()
+      : '';
+
+  const pageLoadedAt = Number(req.body?.pageLoadedAt);
+  const focusedAt = Number(req.body?.focusedAt);
+
+  if (!feedback) {
+    return res.status(400).json({
+      success: false,
+      code: 'empty-feedback',
+      message: 'Please enter your feedback',
+    });
+  }
+
+  // Honeypot and keyword/URL checks are intentionally stealth-dropped.
+  if (honeypot) {
+    return res.json({ success: true });
+  }
+
+  const normalizedFeedback = normalizeFeedbackText(feedback);
+
+  if (feedbackContainsBlockedContent(normalizedFeedback)) {
+    return res.json({ success: true });
+  }
+
+  const now = Date.now();
+
+  const timingFailures = [
+    pageLoadedAt,
+    focusedAt,
+  ].some((startedAt) => (
+    Number.isFinite(startedAt) &&
+    now >= startedAt &&
+    now - startedAt < FEEDBACK_TIMING_THRESHOLD_MS
+  ));
+
+  if (timingFailures) {
+    return res.status(422).json({
+      success: false,
+      code: 'too-fast',
+      message:
+        'You are submitting too fast. Please wait a moment and try again.',
+    });
+  }
+
+  if (!redis) {
+    console.error(
+      'Feedback service unavailable: Upstash Redis is not configured.'
+    );
+
+    return res.status(503).json({
+      success: false,
+      code: 'configuration',
+      message: 'Feedback service is not configured.',
+    });
+  }
+
+  if (!BREVO_API_KEY && !RESEND_API_KEY) {
+    console.error(
+      'Feedback service unavailable: no email provider credentials are configured.'
+    );
+
+    return res.status(503).json({
+      success: false,
+      code: 'configuration',
+      message: 'Feedback service is not configured.',
+    });
+  }
+
+  if (!FEEDBACK_RECIPIENT_EMAIL || !FEEDBACK_SENDER_EMAIL) {
+    console.error(
+      'Feedback service unavailable: sender/recipient configuration is incomplete.'
+    );
+
+    return res.status(503).json({
+      success: false,
+      code: 'configuration',
+      message: 'Feedback service is not configured.',
+    });
+  }
+
+  const correlationId = randomUUID();
+
+  try {
+    const sequenceNumber = await redis.incr(getFeedbackCounterKey());
+
+    const subject =
+      `FEEDBACK [${sequenceNumber}] - ${getFeedbackDateLabel()}`;
+
+    const delivery = await deliverFeedback(
+      feedback,
+      subject,
+      correlationId
+    );
+
+    if (delivery.delivered) {
+      return res.json({ success: true });
+    }
+
+    if (delivery.bothProvidersFailed) {
+      return res.status(503).json({
+        success: false,
+        code: 'delivery-failed',
+        message:
+          'Unable to send feedback, please try again later',
+        correlationId,
+      });
+    }
+
+    return res.status(503).json({
+      success: false,
+      code: 'configuration',
+      message: 'Feedback service is not configured.',
+      correlationId,
+    });
+  } catch (error) {
+    console.error('Feedback processing failed:', {
+      correlationId,
+      category: classifyFeedbackProviderFailure(error),
+    });
+
+    return res.status(503).json({
+      success: false,
+      code: 'delivery-failed',
+      message:
+        'Unable to send feedback, please try again later',
+      correlationId,
+    });
+  }
+});
+
 app.use(express.static('.'));
 
 // ── Serve index.html for all non-API routes ──
@@ -1781,6 +2180,29 @@ app.listen(PORT, () => {
   
   console.log(`✅ Ichnite server running on http://localhost:${PORT}`);
   console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'} (metadata + fallback structural data)`);
+  console.log(
+  `✉️ Feedback providers: Brevo ${
+    BREVO_API_KEY ? 'configured' : '⚠️ missing'
+  } | Resend ${
+    RESEND_API_KEY ? 'configured' : '⚠️ missing'
+  }`
+);
+
+console.log(
+  `📬 Feedback routing: recipient ${
+    FEEDBACK_RECIPIENT_EMAIL ? 'configured' : '⚠️ missing'
+  } | sender ${
+    FEEDBACK_SENDER_EMAIL ? 'configured' : '⚠️ missing'
+  }`
+);
+
+console.log(
+  `🔢 Feedback Redis counter: ${
+    REDIS_BACKUP_ENABLED
+      ? `configured (${FEEDBACK_REDIS_KEY_PREFIX})`
+      : '⚠️ Redis not configured'
+  }`
+);
   console.log(
   `📊 Helius chart API: ${
     HELIUS_BARCHART_TRANSACTION_API_KEY
