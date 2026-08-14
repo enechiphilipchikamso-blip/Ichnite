@@ -11,6 +11,7 @@
   --market-heading: rgba(124, 92, 252, 0.25);
   --off-white: #F2F2F5;
   --white: #ffffff;
+  --white-text: rgba(255, 255, 255, 0.9);
   --error: #ff4d4d;
   --network-error: #f97316;
   --gain: #22c55e;
@@ -117,7 +118,7 @@ main {
   border: 1.5px solid var(--blue-purple);
   border-radius: 50px;
   padding: 10px 16px;
-  color: var(--white);
+  color: var(--white-text);
   font-size: 0.95rem;
   outline: none;
   transition: border 0.3s, box-shadow 0.3s;
@@ -342,7 +343,7 @@ p {
 }
 
 .sol-balance-amount {
-  color: var(--white);
+  color: var(--off-white);
   font-size: 1rem;
   font-weight: 600;
 }
@@ -501,7 +502,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .toggleBtn {
   background-color: var(--blue-purple);
-  color: var(--white);
+  color: var(--off-white);
   border: none;
   border-radius: 50px;
   padding: 8px 18px;
@@ -527,7 +528,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .year-dropdown p {
-  color: var(--white);
+  color: var(--off-white);
   font-size: 0.9rem;
   margin-bottom: 6px;
 }
@@ -550,7 +551,7 @@ grid-template-columns: repeat(4, 1fr);
 
   background-color: var(--blue-purple);
 
-  color: var(--white);
+  color: var(--off-white);
   border: none;
   border-radius: 50px;
 
@@ -848,15 +849,18 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .feedback-widget {
-  width: min(100%, 640px);
+  width: min(100%, 150px);
   margin: 18px auto 10px;
-  background: #12121a;
-  border: 1.5px solid #7c5cfc;
-  border-radius: 50px;
+  background: var(--card-bg);
+  border: 1px solid #2A2A2A;
+  border-radius: 9999px; 
   padding: 8px;
+  padding-bottom: 2px !important; 
+  transition: width 0.35s ease, border-radius 0.1s ease, padding 0.1s ease;
 }
 
 .feedback-widget.is-open {
+  width: min(100%, 360px);
   border-radius: 20px;
   padding: 10px 14px 14px;
 }
@@ -864,8 +868,9 @@ grid-template-columns: repeat(4, 1fr);
 .feedback-toggle {
   display: block;
   width: 100%;
-  min-height: 58px;
-  padding: 12px 24px;
+  min-height: 0px;
+  padding: 0px 10px;
+  padding-bottom: 2px !important; 
   border: 0;
   border-radius: 50px;
   background: transparent;
@@ -887,14 +892,32 @@ grid-template-columns: repeat(4, 1fr);
   flex-direction: column;
   gap: 10px;
   padding: 4px 2px 0;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: max-height 0.35s ease, opacity 0.25s ease, visibility 0s linear 0.35s;
+}
+
+.feedback-widget.is-open .feedback-content {
+  max-height: 320px;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: max-height 0.35s ease, opacity 0.3s ease;
+}
+
+.feedback-content.hidden {
+  display: flex !important;
 }
 
 .feedback-content textarea {
   width: 100%;
-  min-height: 190px;
+  min-height: 120px;
   resize: vertical;
   background: #1a1a26;
-  color: #ffffff;
+  color: var(--white-text);
   border: 1.5px solid #7c5cfc;
   border-radius: 16px;
   padding: 16px;
@@ -905,7 +928,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .feedback-content textarea::placeholder {
-  color: rgba(124, 92, 252, 0.7);
+  color: var(--blue-purple-faded);
   opacity: 1;
 }
 
@@ -1112,7 +1135,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .net-worth-value {
-  color: var(--white);
+  color: var(--off-white);
   font-size: clamp(1.5rem, 4vw, 2.5rem);
   font-weight: 700;
 }
@@ -1196,7 +1219,7 @@ grid-template-columns: repeat(4, 1fr);
 /* ── Share Wallet Button ── */
 .share-wallet-btn {
   background-color: var(--blue-purple);
-  color: var(--white);
+  color: var(--off-white);
   border: none;
   border-radius: 50px;
   padding: 6px 16px;
@@ -1250,7 +1273,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .history-chip:active {
   background-color: var(--blue-purple);
-  color: var(--white);
+  color: var(--off-white);
 }
 
 .history-chip.busy {
@@ -1262,7 +1285,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .history-chip.busy:active {
   background-color: var(--blue-purple);
-  color: var(--white);
+  color: var(--off-white);
   opacity: 1;
 }
 
@@ -1281,7 +1304,7 @@ grid-template-columns: repeat(4, 1fr);
   border: 1.5px solid var(--blue-purple);
   border-radius: 50px;
   padding: 8px 14px;
-  color: var(--white);
+  color: var(--white-text);
   font-size: 0.875rem;
   font-family: 'Space Grotesk', sans-serif;
   outline: none;
@@ -1339,7 +1362,7 @@ grid-template-columns: repeat(4, 1fr);
 
 /* ── Token Total Value ── */
 .token-total-value {
-  color: var(--white);
+  color: var(--off-white);
   font-size: clamp(0.9rem, 2vw, 1rem);
   font-weight: 600;
   margin-bottom: 10px;
@@ -1353,7 +1376,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .nft-count-badge {
   background-color: var(--blue-purple);
-  color: var(--white);
+  color: var(--off-white);
   font-size: 0.75rem;
   font-weight: 700;
   border-radius: 50px;
