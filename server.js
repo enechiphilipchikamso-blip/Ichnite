@@ -37,11 +37,24 @@ const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL?.trim() || '';
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || '';
-const REDIS_KEY_PREFIX = (process.env.REDIS_KEY_PREFIX || 'ichnite:rate-limit:').trim() || 'ichnite:rate-limit:';
+const REDIS_KEY_PREFIX =
+  (process.env.REDIS_KEY_PREFIX || 'ichnite:rate-limit:').trim() ||
+  'ichnite:rate-limit:';
+const REDIS_KEY_PREFIX_SOURCE =
+  process.env.REDIS_KEY_PREFIX?.trim() ? 'configured' : 'default';
+
 const REDIS_BACKUP_ENABLED = Boolean(REDIS_URL && REDIS_TOKEN);
-const redis = REDIS_BACKUP_ENABLED ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN }) : null;
+const redis = REDIS_BACKUP_ENABLED
+  ? new Redis({ url: REDIS_URL, token: REDIS_TOKEN })
+  : null;
+
 const FEEDBACK_REDIS_KEY_PREFIX =
-  (process.env.FEEDBACK_REDIS_KEY_PREFIX || 'ichnite:feedback:').trim() || 'ichnite:feedback:';
+  (process.env.FEEDBACK_REDIS_KEY_PREFIX || 'ichnite:feedback:').trim() ||
+  'ichnite:feedback:';
+const FEEDBACK_REDIS_KEY_PREFIX_SOURCE =
+  process.env.FEEDBACK_REDIS_KEY_PREFIX?.trim()
+    ? 'configured'
+    : 'default';
 
 const BREVO_API_KEY = process.env.BREVO_API_KEY?.trim() || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || '';
@@ -2178,8 +2191,14 @@ app.use((err, req, res, next) => {
 // ════════════════════════════════════════
 app.listen(PORT, () => {
   
-  console.log(`✅ Ichnite server running on http://localhost:${PORT}`);
-  console.log(`🔑 Helius API: ${HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'} (metadata + fallback structural data)`);
+  console.log(
+  `✅ Ichnite server running on http://localhost:${PORT} (${NODE_ENV})`
+);
+console.log(
+  `🔑 Helius API: ${
+    HELIUS_API_KEY ? 'Connected' : '⚠️  Not configured'
+  } (metadata + fallback structural data)`
+);
   console.log(
   `✉️ Feedback providers: Brevo ${
     BREVO_API_KEY ? 'configured' : '⚠️ missing'
@@ -2228,10 +2247,16 @@ console.log(
   console.log(`🔑 CoinGecko: ${COINGECKO_API_KEY ? 'Demo tier' : 'Keyless'} (primary SOL price)`);
   console.log(`🔑 CoinMarketCap: ${CMC_API_KEY ? 'Connected' : '⚠️  Not configured'} (SOL price fallback)`);
     console.log(
-    REDIS_BACKUP_ENABLED
-      ? `🗄️ Redis backup store: using registered Redis URL from .env with prefix "${REDIS_KEY_PREFIX}"`
-      : '🗄️ Redis backup store: local fallback because no Redis account/URL is configured'
-  );
+  `🗄️ Redis rate-limit backup: ${
+    REDIS_BACKUP_ENABLED ? 'configured' : 'disabled'
+  } (prefix ${REDIS_KEY_PREFIX}; ${REDIS_KEY_PREFIX_SOURCE})`
+);
+
+console.log(
+  `🔢 Feedback Redis counter: ${
+    REDIS_BACKUP_ENABLED ? 'available' : 'unavailable'
+  } (prefix ${FEEDBACK_REDIS_KEY_PREFIX}; ${FEEDBACK_REDIS_KEY_PREFIX_SOURCE})`
+);
   const allowedOriginList = [...allowedOrigins];
   console.log(`🔒 Trust proxy: ${describeTrustProxySetting(trustProxySetting)}`);
   console.log(`🌐 Allowed CORS origins: ${allowedOriginList.length ? allowedOriginList.join(', ') : '(none configured)'}`);
