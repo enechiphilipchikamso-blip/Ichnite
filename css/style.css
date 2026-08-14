@@ -883,7 +883,7 @@ grid-template-columns: repeat(4, 1fr);
   color: #7c5cfc;
   font-family: 'Space Grotesk', sans-serif;
   font-size: clamp(1rem, 2.6vw, 1.15rem);
-  font-weight: 500;
+  font-weight: bold;
   letter-spacing: 0.02em;
   cursor: pointer;
   outline: none;
