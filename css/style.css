@@ -946,7 +946,7 @@ grid-template-columns: repeat(4, 1fr);
   margin: 0;
   min-height: 26px;
   color: #7c5cfc;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   line-height: 1.4;
 }
 
@@ -1433,9 +1433,9 @@ grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   background-color: transparent;
   border-radius: 20px;
-  padding: 20px;
+  padding: 10px;
   width: 100%;
-  margin-top: 8px;
+  margin-top: 0px;
 }
 
 /* ── Footer Brand Row ── */
