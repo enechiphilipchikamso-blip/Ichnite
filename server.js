@@ -1441,8 +1441,8 @@ app.get('/api/nfts', async (req, res) => {
             method: 'getAssetsByOwner',
             params: {
               ownerAddress: normalizedAddress,
-              page: 1,
-              limit: 100,
+              page: 5,
+              limit: 1000,
             },
           }),
         }
