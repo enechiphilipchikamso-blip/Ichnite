@@ -1407,6 +1407,113 @@ res.json({ tokens: mappedTokens });
   }
 });
 
+// ── NFT pagination tuning — dedicated env vars, separate from the chart
+// endpoint's Helius budget so each can be tuned independently later. ──
+const HELIUS_MAX_NFT_PAGES = parsePositiveIntEnv(
+  process.env.HELIUS_MAX_NFT_PAGES,
+  50
+);
+
+const HELIUS_NFT_PAGE_DELAY_MS = parsePositiveIntEnv(
+  process.env.HELIUS_NFT_PAGE_DELAY_MS,
+  150
+);
+
+const HELIUS_NFT_MAX_PAGE_RETRIES = parsePositiveIntEnv(
+  process.env.HELIUS_NFT_MAX_PAGE_RETRIES,
+  3
+);
+
+const HELIUS_NFT_RETRY_BASE_DELAY_MS = parsePositiveIntEnv(
+  process.env.HELIUS_NFT_RETRY_BASE_DELAY_MS,
+  1000
+);
+
+const HELIUS_NFT_PAGE_SIZE = 1000;
+
+// Single-page getAssetsByOwner call. Helius DAS pagination is 1-indexed.
+async function fetchHeliusNftPage(ownerAddress, page) {
+  return safeFetch(
+    `https://beta.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getAssetsByOwner',
+        params: {
+          ownerAddress,
+          page,
+          limit: HELIUS_NFT_PAGE_SIZE,
+        },
+      }),
+    }
+  );
+}
+
+// Retries a single page on a 429 only, same policy as the chart endpoint.
+async function fetchHeliusNftPageWithRetry(ownerAddress, page) {
+  let attempt = 0;
+
+  for (;;) {
+    try {
+      return await fetchHeliusNftPage(ownerAddress, page);
+    } catch (error) {
+      const isRateLimited =
+        error instanceof UpstreamError && error.status === 429;
+
+      if (!isRateLimited || attempt >= HELIUS_NFT_MAX_PAGE_RETRIES) {
+        throw error;
+      }
+
+      attempt += 1;
+      const backoffMs = HELIUS_NFT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+
+      console.warn(
+        `Helius NFT page ${page} rate-limited — retrying in ${backoffMs}ms ` +
+        `(attempt ${attempt}/${HELIUS_NFT_MAX_PAGE_RETRIES})`
+      );
+
+      await sleep(backoffMs);
+    }
+  }
+}
+
+// Pages through getAssetsByOwner until Helius returns a short page (fewer
+// items than requested), meaning nothing is left. Paces requests with
+// HELIUS_NFT_PAGE_DELAY_MS and retries individual pages on rate limits.
+async function fetchAllHeliusNfts(ownerAddress) {
+  const collected = [];
+
+  for (let page = 1; page <= HELIUS_MAX_NFT_PAGES; page++) {
+    if (page > 1) {
+      await sleep(HELIUS_NFT_PAGE_DELAY_MS);
+    }
+
+    let data;
+    try {
+      data = await fetchHeliusNftPageWithRetry(ownerAddress, page);
+    } catch (error) {
+      if (page === 1) throw error;
+      console.warn(`Helius NFT pagination stopped after ${page - 1} page(s) — ${error.message}`);
+      break;
+    }
+
+    const items = data.result?.items || [];
+    collected.push(...items);
+
+    if (items.length < HELIUS_NFT_PAGE_SIZE) break;
+
+    if (page === HELIUS_MAX_NFT_PAGES) {
+      console.warn(
+        `Helius NFT pagination hit the ${HELIUS_MAX_NFT_PAGES}-page cap for ${ownerAddress} — list may be incomplete.`
+      );
+    }
+  }
+
+  return collected;
+}
 
 // ── Route 4 — GET /api/nfts?address= ──
 // Fetches NFT holdings from Helius or Shyft
@@ -1438,25 +1545,7 @@ app.get('/api/nfts', async (req, res) => {
     let nfts;
 
     if (HELIUS_API_KEY) {
-      const data = await safeFetch(
-        `https://beta.helius-rpc.com/?api-key=${HELIUS_API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'getAssetsByOwner',
-            params: {
-              ownerAddress: normalizedAddress,
-              page: 1,
-              limit: 1000,
-            },
-          }),
-        }
-      );
-
-      nfts = data.result?.items || [];
+      nfts = await fetchAllHeliusNfts(normalizedAddress);
     } else if (SHYFT_API_KEY) {
       const data = await safeFetch(
         `https://api.shyft.to/sol/v1/nft/read_all?network=mainnet-beta&address=${normalizedAddress}`,
