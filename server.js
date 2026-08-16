@@ -58,9 +58,17 @@ const FEEDBACK_REDIS_KEY_PREFIX_SOURCE =
 
 const BREVO_API_KEY = process.env.BREVO_API_KEY?.trim() || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY?.trim() || '';
-const FEEDBACK_RECIPIENT_EMAIL = process.env.FEEDBACK_RECIPIENT_EMAIL?.trim() || '';
-const FEEDBACK_SENDER_EMAIL = process.env.FEEDBACK_SENDER_EMAIL?.trim() || '';
-const FEEDBACK_SENDER_NAME = process.env.FEEDBACK_SENDER_NAME?.trim() || 'Ichnite';
+const FEEDBACK_RECIPIENT_EMAIL =
+  process.env.FEEDBACK_RECIPIENT_EMAIL?.trim() || '';
+
+const BREVO_SENDER_EMAIL =
+  process.env.BREVO_SENDER_EMAIL?.trim() || '';
+
+const RESEND_SENDER_EMAIL =
+  process.env.RESEND_SENDER_EMAIL?.trim() || '';
+
+const FEEDBACK_SENDER_NAME =
+  process.env.FEEDBACK_SENDER_NAME?.trim() || 'Ichnite';
 
 function isValidTrustProxyToken(token) {
   const value = token.trim();
@@ -744,7 +752,7 @@ async function sendFeedbackWithBrevo(feedback, subject) {
   if (
     !BREVO_API_KEY ||
     !FEEDBACK_RECIPIENT_EMAIL ||
-    !FEEDBACK_SENDER_EMAIL
+    !BREVO_SENDER_EMAIL
   ) {
     throw new Error('Brevo feedback configuration is incomplete.');
   }
@@ -760,7 +768,7 @@ async function sendFeedbackWithBrevo(feedback, subject) {
       },
       body: JSON.stringify({
         sender: {
-          email: FEEDBACK_SENDER_EMAIL,
+          email: BREVO_SENDER_EMAIL,
           name: FEEDBACK_SENDER_NAME,
         },
         to: [
@@ -788,7 +796,7 @@ async function sendFeedbackWithResend(feedback, subject) {
   if (
     !RESEND_API_KEY ||
     !FEEDBACK_RECIPIENT_EMAIL ||
-    !FEEDBACK_SENDER_EMAIL
+    !RESEND_SENDER_EMAIL
   ) {
     throw new Error('Resend feedback configuration is incomplete.');
   }
@@ -804,8 +812,8 @@ async function sendFeedbackWithResend(feedback, subject) {
       },
       body: JSON.stringify({
         from: FEEDBACK_SENDER_NAME
-          ? `${FEEDBACK_SENDER_NAME} <${FEEDBACK_SENDER_EMAIL}>`
-          : FEEDBACK_SENDER_EMAIL,
+          ? `${FEEDBACK_SENDER_NAME} <${RESEND_SENDER_EMAIL}>`
+          : RESEND_SENDER_EMAIL,
         to: [FEEDBACK_RECIPIENT_EMAIL],
         subject,
         text: feedback,
@@ -1595,12 +1603,12 @@ function applyCachedNftImageSources(nfts) {
 
 const HELIUS_MAX_TRANSACTION_PAGES = parsePositiveIntEnv(
   process.env.HELIUS_MAX_TX_PAGES,
-  75
+  250
 );
 
 const HELIUS_TX_TIME_BUDGET_MS = parsePositiveIntEnv(
   process.env.HELIUS_TX_TIME_BUDGET_MS,
-  20000
+  60000
 );
 
 const HELIUS_CHART_PAGE_DELAY_MS = parsePositiveIntEnv(
@@ -2104,17 +2112,21 @@ app.post('/api/feedback', async (req, res) => {
     });
   }
 
-  if (!FEEDBACK_RECIPIENT_EMAIL || !FEEDBACK_SENDER_EMAIL) {
-    console.error(
-      'Feedback service unavailable: sender/recipient configuration is incomplete.'
-    );
+  const feedbackSenderConfigured =
+  (BREVO_API_KEY && BREVO_SENDER_EMAIL) ||
+  (RESEND_API_KEY && RESEND_SENDER_EMAIL);
 
-    return res.status(503).json({
-      success: false,
-      code: 'configuration',
-      message: 'Feedback service is not configured.',
-    });
-  }
+if (!FEEDBACK_RECIPIENT_EMAIL || !feedbackSenderConfigured) {
+  console.error(
+    'Feedback service unavailable: sender/recipient configuration is incomplete.'
+  );
+
+  return res.status(503).json({
+    success: false,
+    code: 'configuration',
+    message: 'Feedback service is not configured.',
+  });
+}
 
   const correlationId = randomUUID();
 
@@ -2210,8 +2222,10 @@ console.log(
 console.log(
   `📬 Feedback routing: recipient ${
     FEEDBACK_RECIPIENT_EMAIL ? 'configured' : '⚠️ missing'
-  } | sender ${
-    FEEDBACK_SENDER_EMAIL ? 'configured' : '⚠️ missing'
+  } | Brevo sender ${
+    BREVO_SENDER_EMAIL ? 'configured' : '⚠️ missing'
+  } | Resend sender ${
+    RESEND_SENDER_EMAIL ? 'configured' : '⚠️ missing'
   }`
 );
 

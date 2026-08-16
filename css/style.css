@@ -1989,3 +1989,147 @@ grid-template-columns: repeat(4, 1fr);
   font-family: 'Space Grotesk', sans-serif;
   font-size:0.75rem;
 }
+
+/* ── Batch 06 — Narrow-width / 400% reflow safeguards ── */
+@media only screen and (max-width: 480px) {
+  .main-wrapper {
+    padding: 0 12px;
+  }
+
+  .search-box {
+    position: relative;
+    width: 100%;
+    max-width: none;
+    padding: 8px;
+    border-radius: 20px;
+  }
+
+  #walletInput {
+    width: 100%;
+    min-width: 0;
+    padding-right: 52px;
+  }
+
+  .search-box .clear-btn {
+    position: absolute;
+    top: 50%;
+    right: 72px;
+    transform: translateY(-50%);
+  }
+
+  #searchBtn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .token-holdings-header {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .token-total-group {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .token-controls-row {
+    align-items: stretch;
+  }
+
+  .token-search-input,
+  .select-wrapper,
+  .token-sort-select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .token-row {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .token-info-col {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .token-value {
+    max-width: 100%;
+    margin-left: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+
+  .total-net-worth {
+    padding-inline: 12px;
+  }
+
+  .net-worth-value {
+    width: 100%;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    text-align: center;
+  }
+
+  .sol-market-row,
+  .wallet-age-row {
+    min-width: 0;
+  }
+
+  .sol-market-label,
+  .wallet-age-left,
+  .sol-price,
+  .wallet-age-value {
+    min-width: 0;
+  }
+
+  .sol-price,
+  .wallet-age-value {
+    max-width: 55%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    text-align: right;
+  }
+
+  .tx-row {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .tx-text {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .copy-sig-btn {
+    margin-left: auto;
+  }
+
+  .feedback-widget {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .feedback-widget.is-open {
+    width: 100%;
+    max-width: 100%;
+    padding: 10px;
+  }
+
+  .feedback-send-btn {
+    align-self: stretch;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .nft-group-header {
+    min-width: 0;
+  }
+
+  .nft-group-name {
+    min-width: 0;
+  }
+}
