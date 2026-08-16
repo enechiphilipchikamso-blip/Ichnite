@@ -1456,6 +1456,12 @@ app.get('/api/nfts', async (req, res) => {
         }
       );
 
+      if (data.error) {
+        throw new UpstreamError(
+          `Helius DAS error: ${data.error.message || JSON.stringify(data.error)}`
+        );
+      }
+
       nfts = data.result?.items || [];
     } else if (SHYFT_API_KEY) {
       const data = await safeFetch(
