@@ -404,19 +404,25 @@ function parseOperationCost(rawValue) {
 function getRateLimitKey(req) {
   const key = req.ip;
   const activeLockout = getActiveRateLimitLockout(key);
-  console.log('🔎 Rate-limit key debug:', {
-    key,
-    reqIp: req.ip,
-    reqIps: req.ips,
-    remoteAddress: req.socket.remoteAddress,
-    xForwardedFor: req.get('x-forwarded-for') || null,
-    xRealIp: req.get('x-real-ip') || null,
-    trustProxy: req.app.get('trust proxy'),
-    activeLockoutResetAt: activeLockout?.resetAt ?? null,
-    activeLockoutRemainingSeconds: activeLockout ? getSecondsUntil(activeLockout.resetAt) : 0,
-    serverTime: Date.now(),
-    serverTimeIso: new Date().toISOString(),
-  });
+
+  if (NODE_ENV === 'development') {
+    console.log('🔎 Rate-limit key debug:', {
+      key,
+      reqIp: req.ip,
+      reqIps: req.ips,
+      remoteAddress: req.socket.remoteAddress,
+      xForwardedFor: req.get('x-forwarded-for') || null,
+      xRealIp: req.get('x-real-ip') || null,
+      trustProxy: req.app.get('trust proxy'),
+      activeLockoutResetAt: activeLockout?.resetAt ?? null,
+      activeLockoutRemainingSeconds: activeLockout
+        ? getSecondsUntil(activeLockout.resetAt)
+        : 0,
+      serverTime: Date.now(),
+      serverTimeIso: new Date().toISOString(),
+    });
+  }
+
   return key;
 }
 
@@ -2343,6 +2349,13 @@ console.log(
   `maxPages=${HELIUS_MAX_TRANSACTION_PAGES}, ` +
   `cacheTTL=${HELIUS_CHART_CACHE_TTL_MS}ms, ` +
   `cacheEntries=${HELIUS_CHART_CACHE_MAX_ENTRIES}`
+);
+
+console.log(
+  `🖼️ Helius NFT pagination: maxPages=${HELIUS_MAX_NFT_PAGES}, ` +
+  `pageDelay=${HELIUS_NFT_PAGE_DELAY_MS}ms, ` +
+  `maxRetries=${HELIUS_NFT_MAX_PAGE_RETRIES}, ` +
+  `retryBase=${HELIUS_NFT_RETRY_BASE_DELAY_MS}ms`
 );
   console.log(`🔑 Shyft API: ${SHYFT_API_KEY ? 'Connected' : '⚠️  Not configured'} (structural data fallback only)`);
   console.log(`🔑 Jupiter Price V3: ${JUPITER_API_KEY ? 'Keyed (1 req/sec)' : 'Keyless (0.5 req/sec)'} (primary token pricing)`);

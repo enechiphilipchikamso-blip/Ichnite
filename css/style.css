@@ -75,7 +75,7 @@ h1 {
   letter-spacing: 2px;
   background: linear-gradient(90deg, 
   #2563eb 0% 33.33%, 
-  #3b82f6 33.33% 66.66%, 
+  #2563eb 33.33% 66.66%, 
   #2563eb 66.66% 100%
 );
   background-clip: text;
@@ -164,7 +164,7 @@ main {
 #searchBtn {
   flex-shrink: 0;
   min-width: fit-content;
-  background-color: var(--blue);
+  background-color: var(--blue-soft);
   color: var(--white);
   border: none;
   border-radius: 50px;
@@ -1909,8 +1909,9 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .token-total-label {
-  color: var(--blue-purple-faded);
+  color: var(--blue-purple);
   font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .sol-skeleton-wrapper {
