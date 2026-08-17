@@ -9,7 +9,7 @@ const BASE_PATH = self.location.pathname.replace(/sw\.js$/, '');
 const CACHE_FILES = [
   `${BASE_PATH}`,
   `${BASE_PATH}index.html`,
-  `${BASE_PATH}style.css`,
+  `${BASE_PATH}css/style.css`,
   `${BASE_PATH}app.js`,
   `${BASE_PATH}manifest.json`,
   `${BASE_PATH}offline.html`,
@@ -26,7 +26,7 @@ const CACHE_FILES = [
 const LOCAL_FILES = [
   `${BASE_PATH}`,
   `${BASE_PATH}index.html`,
-  `${BASE_PATH}style.css`,
+  `${BASE_PATH}css/style.css`,
   `${BASE_PATH}app.js`,
   `${BASE_PATH}manifest.json`,
   `${BASE_PATH}offline.html`,

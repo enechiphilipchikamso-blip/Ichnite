@@ -14,6 +14,12 @@ import fetch from 'node-fetch';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Redis } from '@upstash/redis';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// ── Resolve __dirname (not available by default in ES modules) ──
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ── Validate required environment variables on startup ──
 const requiredEnvVars = ['HELIUS_API_KEY'];
@@ -2273,11 +2279,11 @@ if (!FEEDBACK_RECIPIENT_EMAIL || !feedbackSenderConfigured) {
   }
 });
 
-app.use(express.static('.'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Serve index.html for all non-API routes ──
 app.get('*', (req, res) => {
-  res.sendFile('index.html', { root: '.' });
+  res.sendFile('index.html', { root: path.join(__dirname, 'public') });
 });
 
 // ════════════════════════════════════════
