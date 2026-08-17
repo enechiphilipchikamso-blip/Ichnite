@@ -1910,7 +1910,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .token-total-label {
   color: var(--blue-purple-faded);
-  font-size: 0.7rem;
+  font-size: 0.8rem;
 }
 
 .sol-skeleton-wrapper {
