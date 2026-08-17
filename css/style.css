@@ -1902,6 +1902,12 @@ grid-template-columns: repeat(4, 1fr);
   font-weight: 700;
 }
 
+.token-total-value.is-pending {
+  color: var(--blue-purple-faded);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
 .token-total-label {
   color: var(--blue-purple-faded);
   font-size: 0.7rem;

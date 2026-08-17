@@ -2170,9 +2170,8 @@ function updateTokenTotalsAndChart(tokens, options = {}) {
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
 
   const allUnpriced = sorted.length > 0 && sorted.every(t => t.priceUnavailable);
-  tokenTotalValue.textContent = allUnpriced
-    ? `Value pending — ${sorted.length} token${sorted.length > 1 ? 's' : ''} held, pricing pending`
-    : formatUSD(totalValue);
+  tokenTotalValue.textContent = allUnpriced ? 'Value Pending' : formatUSD(totalValue);
+  tokenTotalValue.classList.toggle('is-pending', allUnpriced);
 
   show(tokenTotalValue);
   drawPieChart(sorted, totalValue, options);
