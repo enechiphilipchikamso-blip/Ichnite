@@ -2168,7 +2168,12 @@ function updateTokenTotalsAndChart(tokens, options = {}) {
   hide(tokenTotalSkeleton);
   const sorted = sortTokens(tokens);
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
-  tokenTotalValue.textContent = formatUSD(totalValue);
+
+  const allUnpriced = sorted.length > 0 && sorted.every(t => t.priceUnavailable);
+  tokenTotalValue.textContent = allUnpriced
+    ? `Value pending — ${sorted.length} token${sorted.length > 1 ? 's' : ''} held, pricing pending`
+    : formatUSD(totalValue);
+
   show(tokenTotalValue);
   drawPieChart(sorted, totalValue, options);
   updateNetWorth();
