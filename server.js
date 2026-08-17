@@ -1826,7 +1826,7 @@ async function fetchHeliusTransactionsForAddress(
   apiKey = HELIUS_API_KEY
 ) {
   const data = await safeFetch(
-    `https://mainnet.helius-rpc.com/?api-key=${apiKey}`,
+    `https://beta.helius-rpc.com/?api-key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
