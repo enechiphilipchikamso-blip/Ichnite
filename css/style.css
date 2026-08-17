@@ -1904,7 +1904,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .token-total-value.is-pending {
   color: var(--blue-purple-faded);
-  font-size: 0.9rem;
+  font-size: 0.7rem;
   font-weight: 400;
 }
 

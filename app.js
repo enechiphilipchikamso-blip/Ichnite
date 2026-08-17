@@ -2170,7 +2170,7 @@ function updateTokenTotalsAndChart(tokens, options = {}) {
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
 
   const allUnpriced = sorted.length > 0 && sorted.every(t => t.priceUnavailable);
-  tokenTotalValue.textContent = allUnpriced ? 'Value Pending' : formatUSD(totalValue);
+  tokenTotalValue.textContent = allUnpriced ? 'Value pending' : formatUSD(totalValue);
   tokenTotalValue.classList.toggle('is-pending', allUnpriced);
 
   show(tokenTotalValue);
@@ -3389,7 +3389,7 @@ removeAllById('netWorthPending');
     const msg = document.createElement('p');
     msg.id = 'netWorthPending';
     msg.className = 'empty-msg';
-    msg.textContent = `Value pending — ${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held, pricing pending`;
+    msg.textContent = `Value pending: (${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held) pricing pending`;
     totalNetWorth.appendChild(msg);
     return;
   }
