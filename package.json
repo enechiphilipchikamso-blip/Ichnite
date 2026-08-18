@@ -13,15 +13,16 @@
     "test": "echo \"No tests configured yet\" && exit 0"
   },
   "engines": {
-    "node": ">=20.0.0"
-  },
+  "node": "24.x"
+},
   "dependencies": {
     "cors": "2.8.5",
     "dotenv": "16.4.5",
     "express": "^4.22.2",
     "express-rate-limit": "7.4.1",
     "helmet": "7.1.0",
-    "node-fetch": "3.3.2"
+    "node-fetch": "3.3.2",
+    "@upstash/redis": "^1.38.0"
   },
   "devDependencies": {
     "nodemon": "3.1.4"

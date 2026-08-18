@@ -12,7 +12,8 @@
 <meta property="og:image:alt" content="Ichnite — Solana Wallet Checker" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
-  <link rel="icon" type="image/png" sizes="any" href="images/logo.png">
+  <link rel="icon" type="image/svg+xml" href="images/logo.svg">
+<link rel="icon" type="image/png" sizes="any" href="images/logo.png">
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: light)">
  <link rel="manifest" href="manifest.json" />
@@ -27,7 +28,6 @@
 
 <body>
   
-    <!-- <div id="floatingLogosContainer" aria-hidden="true"></div> -->
 
   <!-- Header -->
   <header>
@@ -98,8 +98,7 @@
     <div class="sol-balance-left">
       <img
         id="solLogo"
-        src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-        data-src="images/sol-logo.png"
+        src="images/sol-logo.png"
         alt="SOL"
         class="token-logo"
         loading="eager"
@@ -121,7 +120,7 @@
     <span class="sol-market-label">24h change</span>
     <span id="solPriceChange" class="sol-change"></span>
   </div>
-  <p id="solMarketUnavailable" class="wallet-age-value hidden" style="text-align: center; margin-top: 4px;">Price unavailable</p>
+  <p id="solMarketUnavailable" class="wallet-age-value hidden" style="text-align: center; margin-top: 4px;">Market unavailable</p>
   <div class="sol-divider"></div>
   <div id="walletAgeRow" class="wallet-age-row hidden">
     <span class="wallet-age-left">
@@ -234,6 +233,7 @@
       <!-- Skeleton -->
 <div id="nftSkeleton">
   <div class="skeleton skeleton-line"></div>
+  <div class="skeleton skeleton-line"></div>
   <div class="nft-skeleton-grid">
     <div class="skeleton skeleton-nft-card"></div>
     <div class="skeleton skeleton-nft-card"></div>
@@ -299,7 +299,7 @@
 <div id="last7txList" class="hidden"></div>
 
       <!-- Solscan Link -->
-      <p class="solscan-text">See more transactions
+      <p class="solscan-text" id="seemore">See more transactions
         <a id="solscanLink" 
    href="#" 
    target="_blank" 
@@ -310,10 +310,11 @@
 
     </div>
 
+  <div id="feedbackResultsMount"></div>
+
   </section>
 
-  <!-- Footer -->
-<footer>
+<!-- Footer Information -->
 
   <!-- Disclaimer — Full Width -->
   <div class="accordion full-width">
@@ -324,6 +325,9 @@
       <p class="faq-b">Ichnite is a read-only tool. We do not store, collect or save any wallet data.</p>
       <p class="faq-b">All data displayed is publicly available on the Solana blockchain.</p>
       <p class="faq-b">Ichnite is not a financial advisor. Nothing on this platform should be considered financial advice.</p>
+     <p class="faq-b">Ichnite is an independent tool and is not affiliated with, endorsed
+          by, or sponsored by the Solana Foundation or any third-party data
+          provider.</p>
     </div>
   </div>
 
@@ -349,22 +353,101 @@
         <p class="faq-q">What wallets does Ichnite support?</p>
         <p class="faq-a">Ichnite supports any valid Solana wallet address. Simply paste your address and Ichnite will do the rest.</p>
       </div>
+      <div class="faq-item">
+        <p class="faq-q">Why is the search button temporarily disabled?</p>
+        <p class="faq-a">To prevent abuse, Ichnite temporarily limits how many searches can
+   be made in a short period. If you see a countdown, wait for it to
+   finish, then search again.</p>
+      </div>
+      <div class="faq-item">
+        <p class="faq-q">Can I install Ichnite or use it offline?</p>
+        <p class="faq-a">Yes, Ichnite can be installed as an app on your device. An
+   internet connection is still required to fetch live wallet data.</p>
+      </div>
+      <div class="faq-item">
+        <p class="faq-q">Is my feedback anonymous?</p>
+        <p class="faq-a">Yes. The feedback box does not collect your name or email, we
+   only receive the message you send.</p>
+      </div>
     </div>
   </div>
+
+  <div id="feedbackLandingMount">
+    <section
+      id="feedbackWidget"
+      class="feedback-widget"
+      aria-label="Feedback"
+    >
+      <form
+        id="feedbackForm"
+        novalidate
+      >
+        <button
+          type="button"
+          id="feedbackToggle"
+          class="feedback-toggle"
+          aria-expanded="false"
+          aria-controls="feedbackContent"
+        >
+          Feedback
+        </button>
+
+        <div
+          id="feedbackContent"
+          class="feedback-content hidden"
+        >
+          <textarea
+            id="feedbackText"
+            name="feedback"
+            rows="5"
+            placeholder="Your feedback…"
+            aria-label="Your feedback"
+          ></textarea>
+
+          <input
+            id="feedbackWebsite"
+            name="website"
+            type="text"
+            class="feedback-honeypot"
+            tabindex="-1"
+            autocomplete="off"
+            aria-hidden="true"
+          />
+
+          <p
+            id="feedbackHelper"
+            class="feedback-helper"
+            role="status"
+            aria-live="polite"
+          >Send us feedback, suggestions, or bug reports.</p>
+
+          <button
+            id="feedbackSend"
+            class="feedback-send-btn"
+            type="submit"
+          >
+            Send
+          </button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <footer>
 
   <!-- Footer Bottom -->
   <div class="footer-bottom">
     <div class="footer-brand">
-      <img src="images/logo.png" alt="Ichnite" class="footer-logo" />
-      <p class="footer-copyright">© 2026 Ichnite. All Rights Reserved </p>
+      <img src="images/logo.svg" alt="Ichnite" class="footer-logo" />
+      <p class="footer-copyright">© <span id="footerYear"></span> Ichnite. All Rights Reserved </p>
     </div>
-    <a href="#"
+   <!-- <a href="#"
        class="x-link"
        id="IchniteTwitter"
        target="_blank"
        rel="noopener noreferrer">
       <i class="fa-brands fa-x-twitter"></i>
-    </a>
+    </a> -->
   </div>
 
 </footer>
@@ -376,8 +459,8 @@
   </div>
 </noscript>
 <!--
-<button id="backToTopBtn" class="back-to-top hidden">↑</button>
- -->
+<button id="backToTopBtn" class="back-to-top hidden">↑</button> -->
+ 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="app.js"></script>
   

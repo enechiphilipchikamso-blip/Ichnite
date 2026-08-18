@@ -1,4 +1,4 @@
-// ════════════════════════════════════════
+/// ════════════════════════════════════════
 // ── Ichnite app.js ──
 // Frontend JavaScript — connects to server.js backend
 // Never calls external APIs directly — all calls go through /api routes
@@ -6,10 +6,9 @@
 
 'use strict';
 
-// ════════════════════════════════════════
+/// ════════════════════════════════════════
 // ── 1. CONFIGURATION — named constants frozen ──
-// Improvement 7: Named constants and freeze configuration objects
-// ════════════════════════════════════════
+/// ════════════════════════════════════════
 
 const CONFIG = Object.freeze({
   RATE_LIMIT_MS: 3000,
@@ -22,12 +21,16 @@ const CONFIG = Object.freeze({
   CHART_DRAW_DELAY: 300,
   MAX_ADDRESS_LENGTH: 44,
   MAX_RECENT_TX: 7,
+    // sol-price + sol-balance + tokens + nfts + chart + recent + wallet-age — guaranteed base.
+  // wallet-age stays dedicated and unchanged; chart and recent are now separate calls.
+  TRACE_REQUEST_COST: 7,
+  TRACE_MAX_CONCURRENT_REQUESTS: 3,
+  // Transaction rendering can still add /api/token-metadata for the 7 recent rows only.
+  TRACE_REQUEST_COST_MAX: 8,
 });
 
 // ════════════════════════════════════════
-// ── 2. COINGECKO VERIFIED COIN IDs ──
-// Improvement 3: Use CoinGecko actual Coin IDs
-// Verified from coingecko.com URLs
+// ── 2.
 // ════════════════════════════════════════
 
 
@@ -190,6 +193,32 @@ const TOKEN_COLORS = Object.freeze({
   INTCx: '#0071C5',
   AMDx: '#ED1C24',
   PYPLx: '#003087',
+  MSFTx: '#00A4EF',
+  AVGOx: '#CC092F',
+  JPMx: '#117ACA',
+  CVXx: '#0056A2',
+  GSx: '#7399C6',
+  PLTRx: '#000000',
+  MCDx: '#FFC72C',
+  PGx: '#003DA5',
+  JNJx: '#D50032',
+  XOMx: '#DA291C',
+  HONx: '#ED1C24',
+  BACx: '#012169',
+  MAx: '#EB001B',
+  PFEx: '#0093D0',
+  CRWDx: '#FC0000',
+  ACNx: '#A100FF',
+  DELLx: '#007DB8',
+  AZNx: '#830051',
+  GMEx: '#FD0000',
+  RBLXx: '#E2231A',
+  TMOx: '#E4002B',
+  ABTx: '#0057B8',
+  MDTx: '#004B87',
+  SPCXx: '#000000',
+  HOODx: '#00C805',
+  SNDKx: '#E10600',
   DEFAULT: '#7c5cfc',
 });
 
@@ -208,7 +237,6 @@ const API_BASE =
 
 // ════════════════════════════════════════
 // ── 5. STATE VARIABLES ──
-// Improvement 2: Store SOL balance and price in variables
 // ════════════════════════════════════════
 
 let currentWalletAddress = '';
@@ -220,7 +248,10 @@ let liveUpdateInterval = null;
 let liveUpdateFailures = 0;
 let lastSearchTime = 0;
 let allTokens = [];
-let allTransactions = [];
+let allChartTransactions = [];
+let allRecentTransactions = [];
+let chartDataIsPartial = false; // true when the backend stopped paginating early (page cap, time budget, or a later-page provider error) — older activity within the selected range may be missing
+let chartPagesFetched = 0;
 let pieChartInstance = null;
 let barChartInstance = null;
 let solFetchFailed = false;
@@ -235,15 +266,215 @@ let solBalanceFailed = false;
 let solPriceFailed = false;
 let solAgeFailed = false;
 let inputValidTimeout = null;
-let failedFetchCount = 0;
+let failedFetchCount = 0; // legacy — superseded by cardFailureOutcomes/finalizeCardFailures, left in place (unread, harmless)
+let cardFailureOutcomes = {};
+let hardFailureOverrideActive = false;
 let lastRateLimitInfo = null;
 let rateLimitedUntil = null;
+let rateLimitStateKind = null;
 let rateLimitTickInterval = null;
+let rateLimitRestoreInFlight = null;
 
-
-// Improvement 1: AbortController — cancel stale requests
+//AbortController — cancel stale requests
 let currentAbortController = null;
 let liveUpdateAbortController = null;
+
+// Batch 03: feedback widget state is intentionally in-memory only.
+let feedbackIsOpen = false;
+let feedbackHelperResetTimer = null;
+let feedbackPageLoadedAt = Date.now();
+let feedbackFocusedAt = null;
+let feedbackSubmitting = false;
+
+// Batch 01: keep the fixed trace workload independent while bounding active
+// browser/API requests to the approved maximum of three. Queued work starts
+// immediately when a slot becomes available, and aborted queued work is
+// removed before it can create a network request.
+const traceRequestQueue = [];
+let activeTraceRequestCount = 0;
+
+function createTraceAbortError() {
+  const error = new Error('Trace request aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function pumpTraceRequestQueue() {
+  while (
+    activeTraceRequestCount < CONFIG.TRACE_MAX_CONCURRENT_REQUESTS &&
+    traceRequestQueue.length > 0
+  ) {
+    const job = traceRequestQueue.shift();
+    if (!job) continue;
+
+    if (job.signal?.aborted) {
+      job.cleanup();
+      job.reject(createTraceAbortError());
+      continue;
+    }
+
+    job.started = true;
+    activeTraceRequestCount += 1;
+
+    Promise.resolve()
+      .then(() => {
+        if (job.signal?.aborted) {
+          throw createTraceAbortError();
+        }
+        return job.request();
+      })
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        job.cleanup();
+        activeTraceRequestCount -= 1;
+        pumpTraceRequestQueue();
+      });
+  }
+}
+
+function scheduleTraceRequest(request, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createTraceAbortError());
+      return;
+    }
+
+    const job = {
+      request,
+      signal,
+      resolve,
+      reject,
+      started: false,
+      abortHandler: null,
+      cleanup() {
+        if (this.signal && this.abortHandler) {
+          this.signal.removeEventListener('abort', this.abortHandler);
+          this.abortHandler = null;
+        }
+      },
+    };
+
+    if (signal) {
+      job.abortHandler = () => {
+        if (job.started) return;
+
+        const queueIndex = traceRequestQueue.indexOf(job);
+        if (queueIndex !== -1) {
+          traceRequestQueue.splice(queueIndex, 1);
+        }
+
+        job.cleanup();
+        reject(createTraceAbortError());
+      };
+
+      signal.addEventListener('abort', job.abortHandler, { once: true });
+    }
+
+    traceRequestQueue.push(job);
+    pumpTraceRequestQueue();
+  });
+}
+
+// Batch 02 — in-memory client reuse only. Nothing is persisted to browser
+// storage, so a hard refresh clears these caches normally.
+const CLIENT_TOKEN_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_NFT_CACHE_TTL_MS = 15 * 60 * 1000;
+const CLIENT_NFT_IMAGE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CLIENT_CACHE_MAX_ENTRIES = 1000;
+
+const clientTokenMetadataCache = new Map();
+const clientNftCache = new Map();
+const clientNftImageCache = new Map();
+
+function getClientCacheValue(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+
+  if (Date.now() >= entry.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+
+  cache.delete(key);
+  cache.set(key, entry);
+
+  return entry.value;
+}
+
+function setClientCacheValue(cache, key, value, ttlMs) {
+  if (value === undefined || value === null) return;
+
+  cache.delete(key);
+
+  while (cache.size >= CLIENT_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+
+  cache.set(key, {
+    value,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+function primeClientTokenMetadataCache(tokens) {
+  if (!Array.isArray(tokens)) return;
+
+  for (const token of tokens) {
+    const mint = token?.mint?.trim();
+    if (!mint) continue;
+
+    setClientCacheValue(
+      clientTokenMetadataCache,
+      mint,
+      {
+        symbol: token.symbol ?? null,
+        name: token.name ?? null,
+      },
+      CLIENT_TOKEN_METADATA_CACHE_TTL_MS
+    );
+  }
+}
+
+function primeClientNftImageCache(nfts) {
+  if (!Array.isArray(nfts)) return;
+
+  for (const nft of nfts) {
+    const assetId = nft?.id || nft?.assetId || nft?.asset_id;
+    const image =
+      nft?.content?.links?.image ||
+      nft?.content?.files?.[0]?.uri ||
+      nft?.image ||
+      '';
+
+    if (assetId && image) {
+      setClientCacheValue(
+        clientNftImageCache,
+        `asset:${assetId}`,
+        image,
+        CLIENT_NFT_IMAGE_CACHE_TTL_MS
+      );
+    }
+  }
+}
+
+function removeAllById(id) {
+  document.querySelectorAll(`[id="${id}"]`).forEach((node) => node.remove());
+}
+
+function clearRuntimeMessageNodes() {
+  [
+    'netWorthError',
+    'netWorthEmpty',
+    'netWorthPending',
+    'solBalanceError',
+    'solPriceError',
+    'solCardFullError',
+    'barChartError',
+    'barChartEmpty',
+  ].forEach(removeAllById);
+}
 
 // ════════════════════════════════════════
 // ── 6. DOM ELEMENTS ──
@@ -300,8 +531,21 @@ const barChart = document.getElementById('barChart');
 const last7txList = document.getElementById('last7txList');
 const txSkeleton = document.getElementById('txSkeleton');
 const solscanLink = document.getElementById('solscanLink');
+const seemore = document.getElementById('seemore');
 const accordionBtns = document.querySelectorAll('.accordion-btn');
 const infoAccordions = document.querySelectorAll('.accordion.full-width');
+const footerYearEl = document.getElementById('footerYear');
+if (footerYearEl) footerYearEl.textContent = new Date().getFullYear();
+const feedbackWidget = document.getElementById('feedbackWidget');
+const feedbackForm = document.getElementById('feedbackForm');
+const feedbackToggle = document.getElementById('feedbackToggle');
+const feedbackContent = document.getElementById('feedbackContent');
+const feedbackText = document.getElementById('feedbackText');
+const feedbackWebsite = document.getElementById('feedbackWebsite');
+const feedbackHelper = document.getElementById('feedbackHelper');
+const feedbackSend = document.getElementById('feedbackSend');
+const feedbackLandingMount = document.getElementById('feedbackLandingMount');
+const feedbackResultsMount = document.getElementById('feedbackResultsMount');
 
 // ════════════════════════════════════════
 // ── 7. SERVICE WORKER REGISTRATION ──
@@ -401,11 +645,15 @@ function formatTxDate(timestamp) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function calculateWalletAge(transactions) {
-  if (!transactions || transactions.length === 0) return null;
-  const timestamps = transactions.map(tx => tx.timestamp || tx.blockTime).filter(Boolean);
-  if (timestamps.length === 0) return null;
-  const oldest = Math.min(...timestamps);
+// Formats wallet age from the single genesis timestamp returned by the
+// dedicated /api/wallet-age endpoint. Deliberately NOT derived from the
+// transactions list (allTransactions) — that list is capped at the most
+// recent 100 entries, so for an active wallet its oldest entry is almost
+// never the wallet's true first transaction (see fetchWalletAge).
+function formatWalletAge(firstTransactionTimestamp) {
+  if (firstTransactionTimestamp == null) return null;
+  const oldest = Number(firstTransactionTimestamp);
+  if (!Number.isFinite(oldest) || oldest <= 0) return null;
   const diffDays = Math.floor((Date.now() / 1000 - oldest) / 86400);
   const years = Math.floor(diffDays / 365);
   const months = Math.floor((diffDays % 365) / 30);
@@ -435,11 +683,6 @@ function getTokenColorSafe(token) {
   return staticColor && staticColor !== TOKEN_COLORS.DEFAULT
     ? staticColor
     : hashMintToColor(token.mint);
-}
-
-// Improvement 3: Get verified CoinGecko ID by symbol
-function getCoinGeckoId(symbol) {
-  return COINGECKO_IDS[symbol?.toUpperCase()] || null;
 }
 
 async function copyToClipboard(text) {
@@ -474,46 +717,162 @@ function hideAllMessages() {
   hide(emptySearchMsg);
 }
 
-function normalizeRateLimitInfo(info = {}) {
-  const payload = typeof info === 'number'
-    ? { retryAfterSeconds: info }
-    : (info || {});
+const LOCKOUT_STATE_STORAGE_KEY = 'IchniteLockoutState';
+const LEGACY_RATE_LIMIT_STATE_STORAGE_KEY = 'IchniteRateLimitState';
 
-  const fallbackSeconds = 15 * 60;
-  const resetAtValue = Number(payload.resetAt);
-  const retryAfterSecondsValue = Number(payload.retryAfterSeconds);
+function readLockoutStateFromStorage(storage) {
+  try {
+    if (!storage) return null;
 
-  if (Number.isFinite(resetAtValue)) {
+    const raw = storage.getItem(LOCKOUT_STATE_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const lockoutResetAt = Number(parsed?.lockoutResetAt);
+    const lockoutKind = typeof parsed?.lockoutKind === 'string' ? parsed.lockoutKind : null;
+
+    if (!Number.isFinite(lockoutResetAt)) {
+      storage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+      return null;
+    }
+
+    if (lockoutResetAt <= Date.now()) {
+      storage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+      return null;
+    }
+
     return {
-      retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
-      resetAt: resetAtValue,
+      rateLimited: true,
+      lockoutResetAt,
+      lockoutKind,
     };
+  } catch {
+    return null;
+  }
+}
+
+function readPersistedRateLimitState() {
+  const candidates = [
+    readLockoutStateFromStorage(sessionStorage),
+    readLockoutStateFromStorage(localStorage),
+  ].filter(Boolean);
+
+  if (candidates.length === 0) return null;
+
+  return candidates.reduce((latest, current) => (
+    current.lockoutResetAt > latest.lockoutResetAt ? current : latest
+  ));
+}
+
+function persistRateLimitState(lockoutResetAt, lockoutKind = null) {
+  try {
+    if (!Number.isFinite(lockoutResetAt)) return;
+    const payload = JSON.stringify({ lockoutResetAt, lockoutKind });
+
+    sessionStorage.setItem(LOCKOUT_STATE_STORAGE_KEY, payload);
+    localStorage.setItem(LOCKOUT_STATE_STORAGE_KEY, payload);
+  } catch {
+    // silent fail
+  }
+}
+
+function clearPersistedRateLimitState() {
+  try {
+    sessionStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+    sessionStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
+  } catch {
+    // silent fail
   }
 
-  const retryAfterSeconds =
-    Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
-      ? retryAfterSecondsValue
-      : fallbackSeconds;
+  try {
+    localStorage.removeItem(LOCKOUT_STATE_STORAGE_KEY);
+    localStorage.removeItem(LEGACY_RATE_LIMIT_STATE_STORAGE_KEY);
+  } catch {
+    // silent fail
+  }
+}
+
+function hasValidLockoutResetAt(info = {}) {
+  const lockoutResetAt = Number(info?.lockoutResetAt);
+  return Number.isFinite(lockoutResetAt) && lockoutResetAt > Date.now();
+}
+
+function normalizeServerRateLimitInfo(info = {}) {
+  const payload = typeof info === 'number'
+    ? { rateLimited: true, retryAfterSeconds: info }
+    : (info || {});
+
+  const now = Date.now();
+  const persisted = readPersistedRateLimitState();
+
+  // Only an explicit lockoutResetAt may define the lockout expiration. A
+  // generic resetAt can represent the normal request-window reset instead
+  // (see server.js), and must never be silently reinterpreted as the
+  // separate 15-minute lockout. This function never falls back to
+  // client-persisted state to derive a lockoutResetAt — the server is the
+  // sole authority for that value; if the current payload doesn't carry a
+  // valid one, there is none, full stop.
+  const lockoutResetAtValue = Number(payload.lockoutResetAt);
+  const requestWindowResetAtValue = Number(payload.requestWindowResetAt);
+  const remainingValue = Number(payload.remaining);
+
+  let lockoutResetAt = null;
+
+  if (
+    payload.rateLimited &&
+    Number.isFinite(lockoutResetAtValue) &&
+    lockoutResetAtValue > now
+  ) {
+    lockoutResetAt = lockoutResetAtValue;
+  }
 
   return {
-    retryAfterSeconds,
-    resetAt: Date.now() + retryAfterSeconds * 1000,
+    rateLimited: Boolean(payload.rateLimited || lockoutResetAt),
+    remaining: Number.isFinite(remainingValue) ? remainingValue : null,
+    requestWindowResetAt: Number.isFinite(requestWindowResetAtValue) ? requestWindowResetAtValue : null,
+    lockoutResetAt,
+    lockoutKind: payload.lockoutKind ?? payload.kind ?? persisted?.lockoutKind ?? null,
+    retryAfterSeconds: lockoutResetAt
+      ? Math.max(0, Math.ceil((lockoutResetAt - now) / 1000))
+      : 0,
   };
 }
 
-function clearRateLimitCountdownState({ hideMessage = true } = {}) {
+function enterServerRateLimitState(info = {}) {
+  const normalized = normalizeServerRateLimitInfo(info);
+  if (!normalized.lockoutResetAt) return false;
+
+  startRateLimitCountdown({
+    ...normalized,
+    lockoutKind: normalized.lockoutKind || 'server',
+  });
+  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+  return true;
+}
+
+function getLiveUpdateRequestCost() {
+  return allTokens.length > 0 ? 2 : 1;
+}
+
+function clearRateLimitCountdownState({ hideMessage = true, clearStorage = false } = {}) {
   if (rateLimitTickInterval) {
     clearInterval(rateLimitTickInterval);
     rateLimitTickInterval = null;
   }
 
   rateLimitedUntil = null;
+  rateLimitStateKind = null;
   lastRateLimitInfo = null;
   lastSearchTime = 0;
+
+  if (clearStorage) {
+    clearPersistedRateLimitState();
+  }
 
   searchBtn.disabled = false;
   searchBtn.classList.remove('loading');
   searchBtn.innerHTML = 'Trace';
+    setRecentAddressesBusy(false);
 
   if (hideMessage) {
     hide(document.getElementById('rateLimitMsg'));
@@ -521,18 +880,39 @@ function clearRateLimitCountdownState({ hideMessage = true } = {}) {
 }
 
 function startRateLimitCountdown(info = {}) {
-  const normalized = normalizeRateLimitInfo(info);
+  const normalized = normalizeServerRateLimitInfo(info);
+  const lockoutResetAt = Number(normalized.lockoutResetAt);
   const msgEl = document.getElementById('rateLimitMsg');
-  if (!msgEl) return;
+  if (!msgEl || !Number.isFinite(lockoutResetAt)) return;
+
+  const now = Date.now();
+  if (lockoutResetAt <= now) {
+    clearRateLimitCountdownState({ clearStorage: true });
+    return;
+  }
+
+  const currentUntil = Number(rateLimitedUntil);
+  const currentActive = Number.isFinite(currentUntil) && currentUntil > now;
+
+  if (currentActive && currentUntil >= lockoutResetAt && rateLimitTickInterval) {
+    searchBtn.disabled = true;
+    searchBtn.classList.remove('loading');
+    searchBtn.innerHTML = 'Trace';
+    show(msgEl);
+    return;
+  }
 
   if (rateLimitTickInterval) {
     clearInterval(rateLimitTickInterval);
     rateLimitTickInterval = null;
   }
 
-  rateLimitedUntil = normalized.resetAt;
+  rateLimitedUntil = lockoutResetAt;
+  rateLimitStateKind = normalized.lockoutKind || null;
   lastRateLimitInfo = normalized;
   lastSearchTime = 0;
+
+  persistRateLimitState(lockoutResetAt, rateLimitStateKind);
 
   searchBtn.disabled = true;
   searchBtn.classList.remove('loading');
@@ -541,12 +921,12 @@ function startRateLimitCountdown(info = {}) {
   show(msgEl);
 
   const tick = () => {
-    const remainingMs = Math.max(0, rateLimitedUntil - Date.now());
+    const remainingMs = Math.max(0, lockoutResetAt - Date.now());
     const remaining = Math.ceil(remainingMs / 1000);
 
     if (remaining <= 0) {
       msgEl.textContent = `You've reached your limit. Please try again in 0:00`;
-      clearRateLimitCountdownState();
+      clearRateLimitCountdownState({ clearStorage: true });
       return;
     }
 
@@ -559,17 +939,35 @@ function startRateLimitCountdown(info = {}) {
   rateLimitTickInterval = setInterval(tick, 1000);
 }
 
-function enterRateLimitState(info = {}) {
-  const normalized = normalizeRateLimitInfo(info);
-  const currentUntil = Number(rateLimitedUntil);
-
-  if (Number.isFinite(currentUntil) && normalized.resetAt <= currentUntil) {
-    normalized.resetAt = currentUntil;
-    normalized.retryAfterSeconds = Math.max(0, Math.ceil((currentUntil - Date.now()) / 1000));
+async function restorePersistedRateLimitCountdown() {
+  const persisted = readPersistedRateLimitState();
+  if (persisted) {
+    startRateLimitCountdown(persisted);
   }
 
-  startRateLimitCountdown(normalized);
-  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
+  await checkRateLimitGate();
+}
+
+async function restorePersistedRateLimitCountdownOnce() {
+  if (!rateLimitRestoreInFlight) {
+    rateLimitRestoreInFlight = (async () => {
+      try {
+        return await restorePersistedRateLimitCountdown();
+      } finally {
+        rateLimitRestoreInFlight = null;
+      }
+    })();
+  }
+
+  return rateLimitRestoreInFlight;
+}
+
+async function restorePersistedRateLimitCountdownIfNeeded() {
+  const persisted = readPersistedRateLimitState();
+  if (!persisted) return false;
+
+  await restorePersistedRateLimitCountdownOnce();
+  return true;
 }
 
 function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
@@ -625,6 +1023,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   solFetchFailed = true;
   tokenFetchFailed = true;
   barDataAvailable = false;
+  resetBarToggleState();
   tokenDataAvailable = false;
   netWorthRevealed = false;
   tokenCardRevealed = false;
@@ -635,11 +1034,12 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   currentSolBalance = 0;
   currentSolPrice = 0;
   allTokens = [];
-  allTransactions = [];
+  allChartTransactions = [];
+  allRecentTransactions = [];
 
   netWorthValue.textContent = '';
   hide(netWorthSkeleton);
-  hide(netWorthLabel);
+  show(netWorthLabel);
   hide(netWorthValue);
 
   const netWorthMsg = document.createElement('p');
@@ -679,7 +1079,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   solPriceChange.textContent = '';
   solPriceChange.className = 'sol-change';
 
-  walletAgeEl.textContent = 'Age unavailable';
+  walletAgeEl.textContent = 'Temporarily unavailable';
   if (showResults) {
     show(walletAgeRow);
   } else {
@@ -749,118 +1149,148 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   last7txList.replaceChildren(txMsg);
   if (showResults) {
     show(last7txList);
+    hide(solscanLink);
+    hide(seemore);
   } else {
     hide(last7txList);
+    hide(solscanLink);
+    hide(seemore);
   }
 }
 
-function normalizeRateLimitInfo(info = {}) {
-  const fallbackSeconds = 15 * 60;
-  const retryAfterSecondsValue = Number(info.retryAfterSeconds);
-  const resetAtValue = Number(info.resetAt);
+async function checkRateLimitGate(operationCost = null) {
+  const persisted = readPersistedRateLimitState();
 
-  if (Number.isFinite(resetAtValue)) {
-    return {
-      retryAfterSeconds: Math.max(0, Math.ceil((resetAtValue - Date.now()) / 1000)),
-      resetAt: resetAtValue,
-    };
-  }
-
-  const retryAfterSeconds =
-    Number.isFinite(retryAfterSecondsValue) && retryAfterSecondsValue >= 0
-      ? retryAfterSecondsValue
-      : fallbackSeconds;
-
-  return {
-    retryAfterSeconds,
-    resetAt: Date.now() + retryAfterSeconds * 1000,
-  };
-}
-
-function enterRateLimitState(info = {}) {
-  const normalized = normalizeRateLimitInfo(info);
-  const currentResetAt = Number(rateLimitedUntil);
-  const existingResetAt = Number(lastRateLimitInfo?.resetAt);
-
-  lastRateLimitInfo = normalized;
-
-  const shouldRefreshCountdown =
-    !Number.isFinite(currentResetAt) ||
-    normalized.resetAt > currentResetAt + 1000 ||
-    (Number.isFinite(existingResetAt) && normalized.resetAt > existingResetAt + 1000);
-
-  if (shouldRefreshCountdown) {
-    startRateLimitCountdown(normalized.retryAfterSeconds);
-  } else {
-    rateLimitedUntil = normalized.resetAt;
-  }
-
-  showRateLimitBlockedState({ showResults: Boolean(currentWalletAddress) });
-}
-
-async function checkRateLimitGate() {
   try {
-    const res = await fetch(`${API_BASE}/api/rate-limit-status`, {
+    const costQuery = Number.isFinite(operationCost) && operationCost > 0
+      ? `?cost=${encodeURIComponent(operationCost)}`
+      : '';
+    const res = await fetch(`${API_BASE}/api/rate-limit-status${costQuery}`, {
       cache: 'no-store',
     });
 
     if (!res.ok) {
       console.warn('Rate-limit status endpoint returned non-OK response:', res.status);
-      return { rateLimited: false, checked: false };
+      if (persisted) {
+        startRateLimitCountdown(persisted);
+        return {
+          rateLimited: true,
+          checked: false,
+          remaining: 0,
+          retryAfterSeconds: persisted.retryAfterSeconds,
+          lockoutResetAt: persisted.lockoutResetAt,
+          requestWindowResetAt: null,
+        };
+      }
+
+      return {
+        rateLimited: false,
+        checked: false,
+        remaining: null,
+        retryAfterSeconds: 0,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
+      };
     }
 
     const data = await res.json().catch(() => null);
 
     if (!data || typeof data !== 'object') {
       console.warn('Rate-limit status endpoint returned invalid JSON');
-      return { rateLimited: false, checked: false };
+      if (persisted) {
+        startRateLimitCountdown(persisted);
+        return {
+          rateLimited: true,
+          checked: false,
+          remaining: 0,
+          retryAfterSeconds: persisted.retryAfterSeconds,
+          lockoutResetAt: persisted.lockoutResetAt,
+          requestWindowResetAt: null,
+        };
+      }
+
+      return {
+        rateLimited: false,
+        checked: false,
+        remaining: null,
+        retryAfterSeconds: 0,
+        lockoutResetAt: null,
+        requestWindowResetAt: null,
+      };
     }
 
-    if (data.rateLimited) {
-      const retryAfter = Number(data.retryAfterSeconds);
-      const fallbackSeconds = 15 * 60;
-      const secondsToUse = Number.isFinite(retryAfter) && retryAfter >= 0
-        ? retryAfter
-        : fallbackSeconds;
+    const normalized = normalizeServerRateLimitInfo(data);
+    
+    if (Number.isFinite(data.serverTime)) {
+      const skewMs = Date.now() - data.serverTime;
+      console.log(
+        `⏱ Clock skew (browser - server): ${skewMs}ms (${(skewMs / 1000).toFixed(1)}s). ` +
+        `Positive = browser clock is AHEAD of server.`
+      );
+    }
 
-      const resetAtValue = Number(data.resetAt);
-      const resetAt = Number.isFinite(resetAtValue)
-        ? resetAtValue
-        : Date.now() + secondsToUse * 1000;
-
-      lastRateLimitInfo = {
-        retryAfterSeconds: secondsToUse,
-        resetAt,
-      };
-
-      startRateLimitCountdown(secondsToUse);
-
+    if (normalized.lockoutResetAt) {
+      startRateLimitCountdown(normalized);
       return {
         rateLimited: true,
         checked: true,
-        retryAfterSeconds: secondsToUse,
-        resetAt,
+        remaining: normalized.remaining,
+        retryAfterSeconds: normalized.retryAfterSeconds,
+        lockoutResetAt: normalized.lockoutResetAt,
+        requestWindowResetAt: normalized.requestWindowResetAt,
       };
     }
 
-    const remainingValue = Number(data.remaining);
-    const retryAfterValue = Number(data.retryAfterSeconds);
-    const resetAtValue = Number(data.resetAt);
+    if (persisted) {
+      startRateLimitCountdown(persisted);
+      return {
+        rateLimited: true,
+        checked: true,
+        remaining: 0,
+        retryAfterSeconds: persisted.retryAfterSeconds,
+        lockoutResetAt: persisted.lockoutResetAt,
+        requestWindowResetAt: normalized.requestWindowResetAt ?? null,
+      };
+    }
+
+    clearPersistedRateLimitState();
 
     return {
       rateLimited: false,
       checked: true,
-      remaining: Number.isFinite(remainingValue) ? remainingValue : null,
-      retryAfterSeconds: Number.isFinite(retryAfterValue) ? retryAfterValue : 0,
-      resetAt: Number.isFinite(resetAtValue) ? resetAtValue : null,
+      remaining: Number.isFinite(normalized.remaining) ? normalized.remaining : null,
+      retryAfterSeconds: Number.isFinite(normalized.retryAfterSeconds) ? normalized.retryAfterSeconds : 0,
+      lockoutResetAt: null,
+      requestWindowResetAt: normalized.requestWindowResetAt ?? null,
     };
   } catch (error) {
     console.warn('Rate-limit status check failed:', error);
-    return { rateLimited: false, checked: false, error };
+    if (persisted) {
+      startRateLimitCountdown(persisted);
+      return {
+        rateLimited: true,
+        checked: false,
+        remaining: 0,
+        retryAfterSeconds: persisted.retryAfterSeconds,
+        lockoutResetAt: persisted.lockoutResetAt,
+        requestWindowResetAt: null,
+        error,
+      };
+    }
+
+    return {
+      rateLimited: false,
+      checked: false,
+      remaining: null,
+      retryAfterSeconds: 0,
+      lockoutResetAt: null,
+      requestWindowResetAt: null,
+      error,
+    };
   }
 }
 
-// Improvement 10: Differentiate offline and server errors
+// Differentiate offline and server errors
 function showError(type, customMessage) {
   hideAllMessages();
   if (type === 'empty') {
@@ -876,11 +1306,11 @@ function showError(type, customMessage) {
   } else if (type === 'ratelimit') {
     networkErrorMsg.textContent = 'Too many requests. Please wait a moment.';
     show(networkErrorMsg);
-  } else if (type === 'notfound') {
-    networkErrorMsg.textContent = 'Wallet data not found.';
-    show(networkErrorMsg);
   } else if (type === 'solana-delay') {
-    networkErrorMsg.textContent = 'Solana network is experiencing delays. Please try again shortly.';
+    networkErrorMsg.textContent = customMessage || 'Solana network is experiencing delays. Please try again shortly.';
+    show(networkErrorMsg);
+  } else if (type === 'invalid-address') {
+    networkErrorMsg.textContent = customMessage || 'Wallet not found - Invalid Solana Address';
     show(networkErrorMsg);
   } else if (customMessage) {
     networkErrorMsg.textContent = customMessage;
@@ -888,18 +1318,124 @@ function showError(type, customMessage) {
   }
 }
 
-// Improvement 10: Parse response status to show correct error
+//Parse response status to show correct error
+// Single source of truth for classifying a failed backend response into
+// 'notfound' | 'solana-delay' | 'server'. Reads the backend's explicit
+// errorType/headline fields ONLY — never infers a type from substring-
+// matching the human-readable `error` text, so a generic 503/exception can
+// never be misclassified as a genuine Solana delay or a not-found condition.
+function classifyBackendErrorResponse(body) {
+  const backendType = typeof body?.errorType === 'string' ? body.errorType.toLowerCase() : null;
+  return backendType === 'solana-delay' ? 'solana-delay' : 'server';
+}
+
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
+  const body = await response.json().catch(() => null);
+
   if (response.status === 429) {
-    const body = await response.json().catch(() => ({}));
-    enterRateLimitState(body);
+  if (hasValidLockoutResetAt(body)) {
+    enterServerRateLimitState(body);
     throw { type: 'ratelimit' };
   }
 
-  if (response.status === 404) throw { type: 'notfound' };
-  throw { type: 'solana-delay' };
+  // An anomalous data-endpoint 429 has no authoritative lockout timestamp.
+  // Treat it as a server failure for the affected card; do not invent a
+  // client lockout or suppress final per-card aggregation.
+  throw { type: 'server' };
+}
+
+  if (response.status === 400) {
+    hardFailureOverrideActive = true;
+    showError('invalid-address', 'Wallet not found - Invalid Solana Address');
+    throw { type: 'invalid-address' };
+  }
+
+  throw { type: classifyBackendErrorResponse(body) };
+}
+
+async function reportBackendErrorType(response, cardKey) {
+  if (rateLimitedUntil || hardFailureOverrideActive) return;
+
+  if (!response) {
+    recordCardFailure(cardKey, 'server');
+    return;
+  }
+
+  if (response.status === 400) {
+    hardFailureOverrideActive = true;
+    showError('invalid-address', 'Wallet not found - Invalid Solana Address');
+    return;
+  }
+
+  const body = await response.json().catch(() => null);
+
+  if (rateLimitedUntil || hardFailureOverrideActive) return;
+
+  if (response.status === 429) {
+    if (hasValidLockoutResetAt(body)) {
+      enterServerRateLimitState(body);
+      return;
+    }
+
+    // Data-endpoint 429 without an authoritative lockout timestamp:
+    // treat it as a server/card failure rather than creating a client lockout.
+    recordCardFailure(cardKey, 'server');
+    return;
+  }
+
+  recordCardFailure(cardKey, classifyBackendErrorResponse(body));
+}
+
+const CARD_SLOTS = ['solBalance', 'market', 'tokens', 'nfts', 'chart', 'recent', 'age'];
+const CARD_SLOT_ELEMENT_IDS = {
+  solBalance: 'solBalanceError',
+  market: 'solMarketUnavailable',
+  age: 'walletAge',
+  tokens: 'tokenListError',
+  nfts: 'nftListError',
+  chart: 'barChartError',
+  recent: 'recentTxError',
+};
+const FAILURE_REASON_LABEL = {
+  'solana-delay': 'Solana delay',
+  server: 'server error',
+};
+const FAILURE_BANNER_TEXT = {
+  'solana-delay': 'Solana network is experiencing delays. Please try again shortly.',
+  server: 'Ichnite server is having issues. Please try again shortly.',
+};
+
+function recordCardFailure(cardKey, type) {
+  cardFailureOutcomes[cardKey] = type;
+}
+
+function finalizeCardFailures() {
+  if (hardFailureOverrideActive || rateLimitedUntil) return;
+
+  const failedKeys = Object.keys(cardFailureOutcomes);
+  if (failedKeys.length === 0) return;
+
+  const allFailed = failedKeys.length === CARD_SLOTS.length;
+  const allSameType = allFailed && failedKeys.every(
+    (key) => cardFailureOutcomes[key] === cardFailureOutcomes[failedKeys[0]]
+  );
+
+  if (allSameType) {
+    const type = cardFailureOutcomes[failedKeys[0]];
+    showError(type, FAILURE_BANNER_TEXT[type]);
+    return;
+  }
+
+  for (const key of failedKeys) {
+    const type = cardFailureOutcomes[key];
+    const label = FAILURE_REASON_LABEL[type];
+    const el = document.getElementById(CARD_SLOT_ELEMENT_IDS[key]);
+    if (el && label) {
+      el.textContent = `${el.textContent} - ${label}`;
+    }
+  }
 }
 
 function resetInputState() {
@@ -941,9 +1477,10 @@ function renderSearchHistory() {
     chip.textContent = truncateAddress(address);
     chip.title = address;
     chip.addEventListener('click', () => {
-      walletInput.value = address;
-      handleSearch();
-    });
+  if (currentAbortController || rateLimitedUntil) return;
+  walletInput.value = address;
+  handleSearch();
+});
     
     let pressTimer = null;
     chip.addEventListener('touchstart', () => {
@@ -998,9 +1535,7 @@ function showRemoveConfirm(addressToRemove) {
 function showAllSkeletons() {
   infoAccordions.forEach(el => hide(el));
   show(resultsSection);
-  document.getElementById('netWorthError')?.remove();
-  document.getElementById('netWorthEmpty')?.remove();
-  document.getElementById('netWorthPending')?.remove();
+  clearRuntimeMessageNodes();
   show(totalNetWorth);
   show(netWorthSkeleton);
   show(netWorthLabel);
@@ -1008,10 +1543,10 @@ function showAllSkeletons() {
   show(solSkeleton);
   hide(document.getElementById('solMarketSection'));
   hide(document.getElementById('walletAgeRow'));
-    document.getElementById('solMarketUnavailable').textContent = 'Price unavailable';
+    document.getElementById('solMarketUnavailable').textContent = 'Market unavailable';
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
-  document.getElementById('solCardFullError')?.remove();
+  clearRuntimeMessageNodes();
   show(tokenSkeleton);
   show(tokenTotalSkeleton);
   hide(tokenList);
@@ -1019,7 +1554,7 @@ function showAllSkeletons() {
   hide(document.getElementById('tokenScrollFade'));
   hiddenTokenIds.clear();
   removePieHiddenIndicators();
-  document.getElementById('pieLegendCustom')?.replaceChildren();;
+  document.getElementById('pieLegendCustom')?.replaceChildren();
   show(pieSkeleton);
   hide(pieSpinner);
   hide(pieChart);
@@ -1031,8 +1566,11 @@ function showAllSkeletons() {
   show(barSkeleton);
   hide(barSpinner);
   hide(barChart);
+  clearRuntimeMessageNodes();
   show(txSkeleton);
   hide(last7txList);
+  hide(solscanLink);
+  hide(seemore);
 }
 
 function hideSkeletonShowContent(skeletonEl, ...contentEls) {
@@ -1045,6 +1583,8 @@ function hideSkeletonShowContent(skeletonEl, ...contentEls) {
 // ════════════════════════════════════════
 
 function setSearchLoading(isLoading) {
+  setRecentAddressesBusy(isLoading);
+
   if (isLoading) {
     searchBtn.disabled = true;
     searchBtn.classList.add('loading');
@@ -1056,9 +1596,29 @@ function setSearchLoading(isLoading) {
   }
 }
 
+function setRecentAddressesBusy(isBusy) {
+  historyChips?.querySelectorAll('.history-chip').forEach((chip) => {
+    chip.classList.toggle('busy', Boolean(isBusy));
+  });
+}
+
 // ════════════════════════════════════════
 // ── 12. CLEAR / RESET ──
 // ════════════════════════════════════════
+
+function resetBarToggleState() {
+  toggleBtns.forEach(btn => {
+    btn.classList.remove('active');
+    btn.style.transform = '';
+  });
+  document.querySelector('[data-range="days"]')?.classList.add('active');
+  hide(yearDropdown);
+  currentBarRange = 'days';
+  currentYearSelection = 1;
+  yearRangeActive = false;
+  if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
+  yearOptions.forEach(opt => opt.classList.remove('selected'));
+}
 
 function resetAll() {
   // Abort any in-flight requests
@@ -1073,12 +1633,16 @@ function resetAll() {
   currentSolPrice = 0;
   currentSolBalance = 0;
   allTokens = [];
-  allTransactions = [];
+  allChartTransactions = [];
+  allRecentTransactions = [];
   hideAllMessages();
   hide(resultsSection);
   hide(walletDisplay);
   hide(clearBtn);
   hide(totalNetWorth);
+  setRecentAddressesBusy(false);
+  clearRuntimeMessageNodes();
+removePieHiddenIndicators();
   if (tokenSearch) tokenSearch.value = '';
   infoAccordions.forEach(el => show(el));
   infoAccordions.forEach(el => {
@@ -1093,35 +1657,16 @@ function resetAll() {
   removePieHiddenIndicators();
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null; }
       if (liveUpdateInterval) { clearInterval(liveUpdateInterval); liveUpdateInterval = null; }
-  if (liveUpdateAbortController) {
+    if (liveUpdateAbortController) {
     liveUpdateAbortController.abort();
     liveUpdateAbortController = null;
   }
-  clearRateLimitCountdownState();
-      
+
+  clearRateLimitCountdownState({ hideMessage: true, clearStorage: false });
   document.title = 'Ichnite';
-    if (rateLimitTickInterval) {
-    clearInterval(rateLimitTickInterval);
-    rateLimitTickInterval = null;
-  }
-  rateLimitedUntil = null;
-  lastRateLimitInfo = null;
-  const rateLimitMsg = document.getElementById('rateLimitMsg');
-  hide(rateLimitMsg);
-  searchBtn.disabled = false;
-  searchBtn.classList.remove('loading');
-  searchBtn.innerHTML = 'Trace';
-  toggleBtns.forEach(btn => {
-    btn.classList.remove('active');
-    btn.style.transform = '';
-  });
-  document.querySelector('[data-range="days"]')?.classList.add('active');
-  hide(yearDropdown);
-  currentBarRange = 'days';
-  currentYearSelection = 1;
-  yearRangeActive = false;
-  if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
-  yearOptions.forEach(opt => opt.classList.remove('selected'));
+    void restorePersistedRateLimitCountdownIfNeeded();
+  resetBarToggleState();
+  setFeedbackPageType('landing');
   walletInput.focus();
 }
 
@@ -1156,6 +1701,10 @@ walletInput.addEventListener('focus', () => {
 // ════════════════════════════════════════
 
 async function handleSearch() {
+  if (currentAbortController) {
+    return; // a search is already in flight
+  }
+
   if (rateLimitedUntil) {
     return; // countdown already owns the disabled state
   }
@@ -1190,19 +1739,29 @@ async function handleSearch() {
 
   const existingResultsVisible = Boolean(currentWalletAddress);
 
-  // Abort any previous search before starting a new one.
-  if (currentAbortController) {
-    currentAbortController.abort();
-  }
   currentAbortController = new AbortController();
+const searchController = currentAbortController;
 
-  setSearchLoading(true);
+setSearchLoading(true);
 
-  const rateLimitCheck = await checkRateLimitGate();
+  // Cost is passed to the backend so it can authoritatively decide whether the
+// remaining budget covers a full Trace search. Reserve the worst case (8, not
+// the base 7) because chart + recent are separate calls and recent may still
+// need token-metadata for the displayed rows.
+const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
+
+  if (searchController !== currentAbortController || searchController.signal.aborted) {
+    return;
+  }
+
   if (rateLimitCheck.rateLimited) {
     setSearchLoading(false);
     currentAbortController = null;
-    showRateLimitBlockedState({ showResults: existingResultsVisible });
+    if (hasValidLockoutResetAt(rateLimitCheck)) {
+      enterServerRateLimitState(rateLimitCheck);
+    } else {
+      showError('server');
+    }
     return;
   }
 
@@ -1217,11 +1776,11 @@ async function handleSearch() {
     walletInput.classList.remove('input-valid');
   }, 5000);
 
+  setFeedbackPageType('results');
   showAllSkeletons();
   if (tokenSearch) tokenSearch.value = '';
 
-  /* resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); */
-  document.title = 'Ichnite - Wallet Results..';
+  document.title = `Wallet Results - ${currentWalletAddress}`;
   truncatedAddressEl.textContent = truncateAddress(currentWalletAddress);
   show(walletDisplay);
   show(clearBtn);
@@ -1244,6 +1803,7 @@ async function handleSearch() {
     solFetchFailed = false;
     tokenFetchFailed = false;
     barDataAvailable = false;
+    resetBarToggleState();
     tokenDataAvailable = false;
     netWorthRevealed = false;
     tokenCardRevealed = false;
@@ -1252,25 +1812,30 @@ async function handleSearch() {
     solPriceFailed = false;
     solAgeFailed = false;
     failedFetchCount = 0;
+    cardFailureOutcomes = {};
+    hardFailureOverrideActive = false;
     lastRateLimitInfo = null;
 
             await Promise.allSettled([
-      fetchSolBalance(currentWalletAddress),
-      fetchTokens(currentWalletAddress),
-      fetchNFTs(currentWalletAddress),
-      fetchTransactions(currentWalletAddress),
-    ]);
+  fetchSolBalance(currentWalletAddress),
+  fetchTokens(currentWalletAddress),
+  fetchNFTs(currentWalletAddress),
+  fetchWalletActivityChart(currentWalletAddress),
+  fetchRecentTransactions(currentWalletAddress),
+  fetchWalletAge(currentWalletAddress),
+]);
+
+    if (searchController !== currentAbortController || searchController.signal.aborted) {
+      return;
+    }
 
     if (!rateLimitedUntil) {
       updateNetWorth();
     }
-
-    if (!rateLimitedUntil && lastRateLimitInfo) {
-      startRateLimitCountdown(lastRateLimitInfo.retryAfterSeconds);
-    } else if (!rateLimitedUntil && failedFetchCount >= 4) {
-      showError('server');
-    }
+    
+        finalizeCardFailures();
   } finally {
+  if (currentAbortController === searchController) {
     if (!rateLimitedUntil) {
       setSearchLoading(false);
     } else {
@@ -1280,6 +1845,7 @@ async function handleSearch() {
     }
     currentAbortController = null;
   }
+}
 
   if (!rateLimitedUntil) {
     liveUpdateInterval = setInterval(() => {
@@ -1290,37 +1856,71 @@ async function handleSearch() {
 
 // ════════════════════════════════════════
 // ── 15. SOL BALANCE ──
-// Improvement 2: Store SOL price and balance in variables
 // ════════════════════════════════════════
 
 async function fetchSolBalance(address) {
-  document.getElementById('solBalanceError')?.remove();
-  document.getElementById('solPriceError')?.remove();
-  document.getElementById('solCardFullError')?.remove();
+  removeAllById('solBalanceError');
+  removeAllById('solPriceError');
+  removeAllById('solCardFullError');
   const signal = currentAbortController?.signal;
 
   const [priceResult, balanceResult] = await Promise.allSettled([
-    fetch(`${API_BASE}/api/sol-price`, { signal }),
-    fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
-  ]);
+  scheduleTraceRequest(
+    () => fetch(`${API_BASE}/api/sol-price`, { signal }),
+    signal,
+  ),
+  scheduleTraceRequest(
+    () => fetch(`${API_BASE}/api/sol-balance?address=${address}`, { signal }),
+    signal,
+  ),
+]);
 
   if (signal?.aborted) return;
 
   const priceResponse = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
+  hide(solSkeleton);
+
   if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429
       ? await priceResponse.json().catch(() => ({}))
       : await balanceResponse.json().catch(() => ({}));
-    enterRateLimitState(rateLimitBody);
+
+    if (hasValidLockoutResetAt(rateLimitBody)) {
+      enterServerRateLimitState(rateLimitBody);
+      return;
+    }
+
+    hardFailureOverrideActive = true;
+    showError('server');
+
+    solBalanceFailed = true;
+    solPriceFailed = true;
+    solFetchFailed = true;
+    failedFetchCount++;
+
+    hide(solBalanceRow);
+    hide(document.getElementById('solEmptyMsg'));
+
+    const err = document.createElement('p');
+    err.id = 'solBalanceError';
+    err.className = 'empty-msg';
+    err.textContent = 'Unable to load SOL balance';
+    solBalanceRow.insertAdjacentElement('afterend', err);
+
+    show(document.getElementById('solMarketSection'));
+    hide(document.getElementById('solMarketPriceRow'));
+    hide(document.getElementById('solMarketChangeRow'));
+    show(document.getElementById('solMarketUnavailable'));
+    hide(solBalanceUsd);
+
+    revealCard(solBalanceRow.closest('.card'));
     return;
   }
 
   const priceUnreachable = priceResult.status === 'rejected';
   const balanceUnreachable = balanceResult.status === 'rejected';
-
-  hide(solSkeleton);
 
   // Both requests failed at the NETWORK level — backend itself is unreachable.
   // Treat as one full-card failure, skip all per-section granularity entirely.
@@ -1332,8 +1932,6 @@ async function fetchSolBalance(address) {
 
     hide(solBalanceRow);
     hide(document.getElementById('solEmptyMsg'));
-    hide(document.getElementById('solMarketSection'));
-    hide(document.getElementById('walletAgeRow'));
 
     const err = document.createElement('p');
     err.id = 'solBalanceError';
@@ -1341,6 +1939,20 @@ async function fetchSolBalance(address) {
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
 
+    // Market is owned by this same function's price handling below — show
+    // it with its own placeholder instead of hiding it. Wallet Age is owned
+    // exclusively by fetchWalletAge(), which runs independently in the same
+    // Promise.allSettled batch in handleSearch() — never touch #walletAgeRow
+    // here, or it races with that function's own correct handling of this
+    // exact failure.
+    show(document.getElementById('solMarketSection'));
+    hide(document.getElementById('solMarketPriceRow'));
+    hide(document.getElementById('solMarketChangeRow'));
+    show(document.getElementById('solMarketUnavailable'));
+    hide(solBalanceUsd);
+
+    recordCardFailure('solBalance', 'server');
+    recordCardFailure('market', 'server');
     revealCard(solBalanceRow.closest('.card'));
     return;
   }
@@ -1358,9 +1970,6 @@ async function fetchSolBalance(address) {
 
     currentSolBalance = balanceData.balance || 0;
     solBalanceFailed = false;
-
-    // Load SOL logo
-    if (solLogo?.dataset.src) solLogo.src = solLogo.dataset.src;
 
     if (currentSolBalance === 0) {
       hide(solBalanceRow);
@@ -1381,6 +1990,7 @@ async function fetchSolBalance(address) {
     err.className = 'empty-msg';
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
+    await reportBackendErrorType(balanceResponse, 'solBalance');
   }
 
   if (signal?.aborted || rateLimitedUntil) return;
@@ -1420,6 +2030,7 @@ async function fetchSolBalance(address) {
     hide(marketValuesRow2);
     show(marketPlaceholder);
     hide(solBalanceUsd);
+    await reportBackendErrorType(priceResponse, 'market');
   }
 
   revealCard(solBalanceRow.closest('.card'));
@@ -1428,18 +2039,21 @@ async function fetchSolBalance(address) {
 
 // ════════════════════════════════════════
 // ── 16. TOKEN HOLDINGS ──
-// Improvement 3: Use verified CoinGecko IDs
 // ════════════════════════════════════════
 
 async function fetchTokens(address) {
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/tokens?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/tokens?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
 
     allTokens = data.tokens || [];
+    primeClientTokenMetadataCache(allTokens);
 
     if (allTokens.length === 0) {
       tokenDataAvailable = false;
@@ -1459,51 +2073,25 @@ async function fetchTokens(address) {
 
     // Amounts, metadata, and prices all arrive together — no separate price fetch needed
     tokenDataAvailable = true;
-    renderTokenList(allTokens);
+    renderTokenList(allTokens, {});
 
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
     tokenFetchFailed = true;
     tokenDataAvailable = false;
     failedFetchCount++;
+    recordCardFailure('tokens', error?.type || 'server');
     console.error('Token error:', error);
     hideSkeletonShowContent(tokenSkeleton, tokenList);
     hide(tokenTotalSkeleton);
     hide(pieSkeleton);
     const msg = document.createElement('p');
+    msg.id = 'tokenListError';
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load token holdings';
     tokenList.replaceChildren(msg);
   }
 }
-
-async function fetchTokenPrices(tokens) {
-  let priceFetchSucceeded = false;
-  try {
-    // Only send tokens with a verified CoinGecko ID — never guess.
-    // Unknown tokens simply show $0.00 rather than risking a 400 for everyone.
-    const ids = tokens
-      .map(t => getCoinGeckoId(t.symbol))
-      .filter(Boolean);
-
-    const allIds = [...new Set(ids)].join(',');
-    if (!allIds) return;
-
-    const res = await fetch(`${API_BASE}/api/token-prices?ids=${encodeURIComponent(allIds)}`, 
-      {  signal: currentAbortController?.signal,  }
-    );
-    if (!res.ok) throw new Error('Price API error');
-    tokenPrices = await res.json();
-    const data = await res.json();
-tokenPrices = data && typeof data === 'object' ? data : {};
-    priceFetchSucceeded = true;
-  } catch (error) {
-    if (error.name === 'AbortError') return false;
-    console.warn('Token prices unavailable, keeping last known prices:', error);
-    // Do NOT wipe tokenPrices — keep last known good values instead of resetting to $0.00
-      }
-      return priceFetchSucceeded;
-    }
 
 function getTokenUsdValue(token) {
   if (token.priceUnavailable || token.priceUsd === null || token.priceUsd === undefined) return 0;
@@ -1580,7 +2168,11 @@ function updateTokenTotalsAndChart(tokens, options = {}) {
   hide(tokenTotalSkeleton);
   const sorted = sortTokens(tokens);
   const totalValue = sorted.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
-  tokenTotalValue.textContent = formatUSD(totalValue);
+
+  const allUnpriced = sorted.length > 0 && sorted.every(t => t.priceUnavailable);
+  tokenTotalValue.textContent = allUnpriced ? 'Value pending' : formatUSD(totalValue);
+  tokenTotalValue.classList.toggle('is-pending', allUnpriced);
+
   show(tokenTotalValue);
   drawPieChart(sorted, totalValue, options);
   updateNetWorth();
@@ -1622,8 +2214,8 @@ function renderVisibleTokenRows() {
 }
 
 // Full render — used by initial fetch and live refresh. Updates everything.
-function renderTokenList(options = {}) {
-  updateTokenTotalsAndChart(allTokens, options);
+function renderTokenList(tokens, options = {}) {
+  updateTokenTotalsAndChart(tokens, options);
   renderVisibleTokenRows();
 }
 
@@ -1723,7 +2315,7 @@ function openTokenSortOverlay() {
 
 // ════════════════════════════════════════
 // ── 17. PIE CHART ──
-// Improvement 4: Update chart instead of recreating when possible
+//Update chart instead of recreating when possible
 // ════════════════════════════════════════
 
 const OTHER_ID = '__other__';
@@ -1964,47 +2556,74 @@ function renderPieHiddenIndicators(hasVisibleSlices) {
 
 // ════════════════════════════════════════
 // ── 18. NFTs ──
-// Improvement 5 and 6: createElement and addEventListener
 // ════════════════════════════════════════
 
 async function fetchNFTs(address) {
+  const signal = currentAbortController?.signal;
+  const cacheKey = address.trim();
+
   try {
-    const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/nfts?address=${address}`, { signal });
-    const data = await handleResponse(res);
+    let nfts = getClientCacheValue(clientNftCache, cacheKey);
+
+    if (!nfts) {
+      const res = await scheduleTraceRequest(
+        () => fetch(`${API_BASE}/api/nfts?address=${address}`, { signal }),
+        signal,
+      );
+
+      const data = await handleResponse(res);
+
+      if (signal?.aborted || rateLimitedUntil) return;
+
+      nfts = data.nfts || [];
+
+      setClientCacheValue(
+        clientNftCache,
+        cacheKey,
+        nfts,
+        CLIENT_NFT_CACHE_TTL_MS
+      );
+    }
 
     if (signal?.aborted || rateLimitedUntil) return;
 
-    const nfts = data.nfts || [];
+    primeClientNftImageCache(nfts);
 
     if (nfts.length === 0) {
-      nftGrid.replaceChildren(); // clear stale images from a previous successful search
+      nftGrid.replaceChildren();
       hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
+
       const msg = document.createElement('p');
       msg.className = 'empty-msg';
       msg.textContent = 'This wallet has no NFTs';
+
       nftList.replaceChildren(msg);
       revealCard(nftList.closest('.card'));
       return;
     }
 
-    if (signal?.aborted || rateLimitedUntil) return;
-
     nftCountBadge.textContent = nfts.length;
     show(nftCountBadge);
+
     renderNFTList(nfts);
     renderNFTGrid(nfts);
+
     hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
     revealCard(nftList.closest('.card'));
 
   } catch (error) {
-    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
+    if (
+      error?.type === 'ratelimit' ||
+      error?.name === 'AbortError' ||
+      rateLimitedUntil
+    ) {
+      return;
+    }
 
     failedFetchCount++;
+    recordCardFailure('nfts', error?.type || 'server');
 
     console.error('NFT error:', error);
-    console.error('NFT error message:', error?.message);
-    console.error('NFT error stack:', error?.stack);
 
     nftGrid.replaceChildren();
     nftList.replaceChildren();
@@ -2012,6 +2631,7 @@ async function fetchNFTs(address) {
     hideSkeletonShowContent(nftSkeleton, nftList, nftGrid);
 
     const msg = document.createElement('p');
+    msg.id = 'nftListError';
     msg.className = 'empty-msg';
     msg.textContent = 'Unable to load NFTs';
 
@@ -2101,7 +2721,18 @@ function renderNFTGrid(nfts) {
   const fragment = document.createDocumentFragment();
   sorted.forEach((nft, index) => {
     const name = nft.content?.metadata?.name || nft.name || 'Unknown NFT';
-    const image = nft.content?.links?.image || nft.content?.files?.[0]?.uri || nft.image || '';
+    const assetId = nft?.id || nft?.assetId || nft?.asset_id;
+
+const image =
+  (assetId &&
+    getClientCacheValue(
+      clientNftImageCache,
+      `asset:${assetId}`
+    )) ||
+  nft.content?.links?.image ||
+  nft.content?.files?.[0]?.uri ||
+  nft.image ||
+  '';
 
     const card = document.createElement('div');
     card.className = 'nft-card';
@@ -2117,7 +2748,7 @@ function renderNFTGrid(nfts) {
     img.className = 'nft-image';
     img.loading = 'lazy';
     img.onerror = () => {
-      // Improvement 9: Use backend token logo fallback
+      // Use backend token logo fallback
       img.src = `${API_BASE}/api/nft-image-fallback`;
       img.onerror = () => {
         img.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
@@ -2144,32 +2775,37 @@ function renderNFTGrid(nfts) {
 
 // ════════════════════════════════════════
 // ── 19. TRANSACTIONS ──
-// Improvement 5 and 6: createElement and addEventListener
 // ════════════════════════════════════════
 
-async function fetchTransactions(address) {
-  document.getElementById('barChartError')?.remove();
-  document.getElementById('barChartEmpty')?.remove();
+async function fetchWalletActivityChart(address) {
+  removeAllById('barChartError');
+removeAllById('barChartEmpty');
 
   try {
     const signal = currentAbortController?.signal;
-    const res = await fetch(`${API_BASE}/api/transactions?address=${address}`, { signal });
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/transactions/chart?address=${address}`, { signal }),
+  signal,
+);
     const data = await handleResponse(res);
 
     if (signal?.aborted || rateLimitedUntil) return;
 
-    allTransactions = data.transactions || [];
-    const age = calculateWalletAge(allTransactions);
+    allChartTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+    chartDataIsPartial = Boolean(data.partial);
+    chartPagesFetched = Number.isFinite(data.pagesFetched) ? data.pagesFetched : 0;
+
+    if (chartDataIsPartial) {
+      console.warn(
+        `Wallet activity chart is showing partial data — ${chartPagesFetched} page(s) fetched, ` +
+        `${allChartTransactions.length} transaction(s) loaded. Older activity within the selected ` +
+        `range may not be reflected.`
+      );
+    }
 
     if (signal?.aborted || rateLimitedUntil) return;
 
-    if (age) {
-      walletAgeEl.textContent = age;
-      solAgeFailed = false;
-      show(document.getElementById('walletAgeRow'));
-    }
-
-    if (allTransactions.length === 0) {
+    if (allChartTransactions.length === 0) {
       barDataAvailable = false;
       hide(barSkeleton);
       hide(barChart);
@@ -2179,35 +2815,102 @@ async function fetchTransactions(address) {
       noActivityMsg.className = 'empty-msg';
       noActivityMsg.textContent = 'This wallet has no chart activity';
       barChart.closest('.chart-scroll-wrapper')?.appendChild(noActivityMsg);
-    } else {
-      barDataAvailable = true;
-      renderBarChart(allTransactions, currentBarRange, currentYearSelection);
+      return;
     }
 
-    renderRecentTransactions(allTransactions);
+    barDataAvailable = true;
+    renderBarChart(allChartTransactions, currentBarRange, currentYearSelection);
+  } catch (error) {
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
+    barDataAvailable = false;
+    failedFetchCount++;
+    recordCardFailure('chart', error?.type || 'server');
+    console.error('Wallet activity chart error:', error);
+
+    hide(barSkeleton);
+    hide(barChart);
+    barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
+
+    const barErrorMsg = document.createElement('p');
+    barErrorMsg.id = 'barChartError';
+    barErrorMsg.className = 'empty-msg';
+    barErrorMsg.textContent = 'Unable to load wallet activity chart';
+    barChart.closest('.chart-scroll-wrapper')?.appendChild(barErrorMsg);
+  }
+}
+
+async function fetchRecentTransactions(address) {
+  try {
+    const signal = currentAbortController?.signal;
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/transactions/recent?address=${address}`, { signal }),
+  signal,
+);
+    const data = await handleResponse(res);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    allRecentTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    await renderRecentTransactions(allRecentTransactions, { signal });
+  } catch (error) {
+    if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
+
+    failedFetchCount++;
+    recordCardFailure('recent', error?.type || 'server');
+    console.error('Recent transactions error:', error);
+
+    hideSkeletonShowContent(txSkeleton, last7txList);
+    hide(solscanLink);
+    hide(seemore);
+
+    const msg = document.createElement('p');
+    msg.id = 'recentTxError';
+    msg.className = 'empty-msg';
+    msg.textContent = 'Unable to load transactions';
+    last7txList.replaceChildren(msg);
+  }
+}
+
+// Dedicated, lightweight call for wallet age — decoupled from the chart/recent
+// transaction fetches on purpose (see formatWalletAge). Uses the same
+// handleResponse/abort/lockout
+// pattern as every other fetch here, so a 429 from this call is handled by the
+// single existing enterServerRateLimitState path — it cannot create a second
+// lockout or bypass the budget/lockout architecture.
+async function fetchWalletAge(address) {
+  const signal = currentAbortController?.signal;
+
+  try {
+    const res = await scheduleTraceRequest(
+  () => fetch(`${API_BASE}/api/wallet-age?address=${address}`, { signal }),
+  signal,
+);
+    const data = await handleResponse(res);
+
+    if (signal?.aborted || rateLimitedUntil) return;
+
+    const age = formatWalletAge(data.firstTransactionTimestamp);
+
+    if (age) {
+      walletAgeEl.textContent = age;
+      solAgeFailed = false;
+    } else {
+      walletAgeEl.textContent = 'Age unavailable';
+      solAgeFailed = true;
+    }
+    show(document.getElementById('walletAgeRow'));
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     solAgeFailed = true;
     walletAgeEl.textContent = 'Age unavailable';
     show(document.getElementById('walletAgeRow'));
-    barDataAvailable = false;
-    failedFetchCount++;
-    console.error('Transaction error:', error);
-    hide(barSkeleton);
-    hide(barChart);
-    barChart.closest('.chart-scroll-wrapper')?.classList.remove('chart-reserved');
-    const barErrorMsg = document.createElement('p');
-    barErrorMsg.id = 'barChartError';
-    barErrorMsg.className = 'empty-msg';
-    barErrorMsg.textContent = 'Unable to load wallet activity chart';
-    barChart.closest('.chart-scroll-wrapper')?.appendChild(barErrorMsg);
-    hideSkeletonShowContent(txSkeleton, last7txList);
-    const msg = document.createElement('p');
-    msg.className = 'empty-msg';
-    msg.textContent = 'Unable to load transactions';
-    last7txList.replaceChildren(msg);
+    recordCardFailure('age', error?.type || 'server');
+    console.error('Wallet age error:', error);
   }
 }
 
@@ -2270,32 +2973,81 @@ function getTxIconSymbol(tx) {
   return '↓';
 }
 
-async function renderRecentTransactions(transactions) {
+// Keep renderRecentTransactions exactly as-is.
+async function renderRecentTransactions(transactions, options = {}) {
+  const signal = options.signal || currentAbortController?.signal;
+  const safeTransactions = Array.isArray(transactions) ? transactions : [];
+
+    const recentTransactions = safeTransactions.slice(0, CONFIG.MAX_RECENT_TX);
+
   const txMints = [...new Set(
-    transactions
+    recentTransactions
       .flatMap(tx => tx.tokenTransfers?.map(t => t.mint) || [])
       .filter(Boolean)
   )];
+
   let txTokenMetadata = new Map();
-  if (txMints.length > 0) {
-    try {
-      const res = await fetch(`${API_BASE}/api/token-metadata?mints=${txMints.join(',')}`);
-      if (res.ok) {
-        const data = await res.json();
-        txTokenMetadata = new Map(Object.entries(data.metadata || {}));
-      }
-    } catch { /* fall through to mint-address display */ }
+const missingTxMints = [];
+
+for (const mint of txMints) {
+  const cachedMetadata = getClientCacheValue(
+    clientTokenMetadataCache,
+    mint
+  );
+
+  if (cachedMetadata) {
+    txTokenMetadata.set(mint, cachedMetadata);
+  } else {
+    missingTxMints.push(mint);
   }
-  if (!transactions || transactions.length === 0) {
+}
+
+if (
+  missingTxMints.length > 0 &&
+  !signal?.aborted &&
+  !rateLimitedUntil
+) {
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/token-metadata?mints=${missingTxMints.join(',')}`,
+      { signal }
+    );
+
+    if (res.ok) {
+      const data = await res.json();
+
+      for (const [mint, metadata] of Object.entries(
+        data.metadata || {}
+      )) {
+        txTokenMetadata.set(mint, metadata);
+
+        setClientCacheValue(
+          clientTokenMetadataCache,
+          mint,
+          metadata,
+          CLIENT_TOKEN_METADATA_CACHE_TTL_MS
+        );
+      }
+    }
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      // fall through to mint-address display
+    }
+  }
+}
+
+  if (safeTransactions.length === 0) {
     hideSkeletonShowContent(txSkeleton, last7txList);
+    hide(solscanLink);
+    hide(seemore);
     const msg = document.createElement('p');
     msg.className = 'empty-msg';
-    msg.textContent = 'This wallet has no transactions yet';
+    msg.textContent = 'This wallet has no transactions';
     last7txList.replaceChildren(msg);
     return;
   }
 
-  const recent = transactions.slice(0, CONFIG.MAX_RECENT_TX);
+    const recent = recentTransactions;
   const grouped = {};
   recent.forEach(tx => {
     const dateKey = formatTxDate(tx.timestamp || tx.blockTime);
@@ -2325,18 +3077,17 @@ async function renderRecentTransactions(transactions) {
       textSpan.className = 'tx-text';
       textSpan.textContent = describeTransaction(tx, txTokenMetadata);
 
-      // Copy signature button — Improvement 6: addEventListener not onclick
-      const copyBtn = document.createElement('button');
+                  const copyBtn = document.createElement('button');
       copyBtn.className = 'copy-sig-btn';
       copyBtn.title = 'Copy transaction signature';
       copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
 
-      const signature = tx.signature || '';
-      copyBtn.addEventListener('click', async () => {
-        if (!signature) return;
-        await copyToClipboard(signature);
-        showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
-      });
+              const signature = tx.signature || tx.signatures?.[0] || '';
+        copyBtn.addEventListener('click', async () => {
+          if (!signature) return;
+          await copyToClipboard(signature);
+          showCopySuccess(copyBtn, '<i class="fa-regular fa-copy"></i>');
+        });
 
       row.appendChild(iconSpan);
       row.appendChild(textSpan);
@@ -2347,6 +3098,8 @@ async function renderRecentTransactions(transactions) {
 
   last7txList.replaceChildren(fragment);
   hideSkeletonShowContent(txSkeleton, last7txList);
+  show(solscanLink);
+  show(seemore);
   if (!barCardRevealed) {
     revealCard(last7txList.closest('.card'));
     barCardRevealed = true;
@@ -2355,7 +3108,7 @@ async function renderRecentTransactions(transactions) {
 
 // ════════════════════════════════════════
 // ── 20. BAR CHART ──
-// Improvement 4: Update chart instead of recreating
+//Update chart instead of recreating
 // ════════════════════════════════════════
 
 function buildBarChartData(transactions, range, yearCount = 1) {
@@ -2420,7 +3173,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
     hide(barSpinner);
     show(barChart);
 
-    // Improvement 4: Update existing bar chart instead of recreating
+    // Update existing bar chart instead of recreating
   if (barChartInstance) {
       barChartInstance.data.labels = labels;
       barChartInstance.data.datasets[0].data = counts;
@@ -2448,11 +3201,25 @@ function renderBarChart(transactions, range, yearCount = 1) {
           borderWidth: 0,
           borderRadius: 0,
           borderSkipped: false,
+          minBarLength: (ctx) => {
+            const value = ctx.chart?.data?.datasets?.[ctx.datasetIndex]?.data?.[ctx.dataIndex];
+            if (!(value > 0)) return 0;
+            const areaHeight = ctx.chart?.chartArea?.height;
+            if (!Number.isFinite(areaHeight) || areaHeight <= 0) return 5; // not laid out yet
+            return Math.max(3, Math.round(areaHeight * 0.015));
+          },
         }],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        onResize: (chart) => {
+          chart.update();
+        },
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -2483,9 +3250,25 @@ function renderBarChart(transactions, range, yearCount = 1) {
             border: { display: false },
           },
           y: {
+            beginAtZero: true,
+            
             grid: { display: true, drawOnChartArea: true, color: 'rgba(124, 92, 252, 0.1)' },
-            ticks: { color: '#7c5cfc', font: { family: 'Space Grotesk', size: 11 }, stepSize: 1, beginAtZero: true },
             border: { display: false },
+            
+            ticks: { 
+              color: '#7c5cfc', 
+              font: { family: 'Space Grotesk', size: 11 },
+              
+              maxTicksLimit: 10, 
+              precision: 0,
+              
+              callback: function(value) {
+                if (value === 0) return '0'; 
+                if (value >= 1e6) return (value / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+                if (value >= 1e3) return (value / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+                return Math.round(value).toString();
+              }
+            },
           },
         },
       },
@@ -2540,7 +3323,7 @@ toggleBtns.forEach(btn => {
       if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
       yearOptions.forEach(opt => opt.classList.remove('selected'));
       currentBarRange = range;
-      renderBarChart(allTransactions, range, currentYearSelection);
+      renderBarChart(allChartTransactions, range, currentYearSelection);
     }
   });
 });
@@ -2554,21 +3337,21 @@ yearOptions.forEach(option => {
     yearRangeActive = true;
     hide(yearDropdown);
     if (yearToggleBtn) yearToggleBtn.textContent = `${currentYearSelection} Year${currentYearSelection > 1 ? 's' : ''}`;
-    renderBarChart(allTransactions, 'year', currentYearSelection);
+    renderBarChart(allChartTransactions, 'year', currentYearSelection);
   });
 });
 
 // ════════════════════════════════════════
 // ── 22. WALLET TOTAL NET WORTH ──
-// Improvement 2: Use stored variables — no duplicate API call
+//Use stored variables — no duplicate API call
 // ════════════════════════════════════════
 
 function updateNetWorth() {
   if (rateLimitedUntil) return;
 
-  document.getElementById('netWorthError')?.remove();
-  document.getElementById('netWorthEmpty')?.remove();
-  document.getElementById('netWorthPending')?.remove();
+  removeAllById('netWorthError');
+removeAllById('netWorthEmpty');
+removeAllById('netWorthPending');
 
   // A product/sum needs EVERY input valid — if either half of the math can't
   // be trusted, the total can't be trusted. Never silently treat a failed
@@ -2606,7 +3389,7 @@ function updateNetWorth() {
     const msg = document.createElement('p');
     msg.id = 'netWorthPending';
     msg.className = 'empty-msg';
-    msg.textContent = `Value pending — ${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held, pricing pending`;
+    msg.textContent = `Value pending: (${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held) pricing pending`;
     totalNetWorth.appendChild(msg);
     return;
   }
@@ -2639,15 +3422,35 @@ function updateNetWorth() {
 // ════════════════════════════════════════
 
 async function fetchLivePrices() {
-  if (!currentWalletAddress || rateLimitedUntil) return;
+  if (!currentWalletAddress || rateLimitedUntil || currentAbortController) return;
 
   if (liveUpdateAbortController) {
     liveUpdateAbortController.abort();
   }
 
   liveUpdateAbortController = new AbortController();
+  if (currentAbortController) {
+    liveUpdateAbortController.abort();
+    liveUpdateAbortController = null;
+    return;
+  }
+
   const { signal } = liveUpdateAbortController;
   const walletSnapshot = currentWalletAddress;
+
+  const liveUpdateCost = getLiveUpdateRequestCost();
+  // Cost is passed to the backend so it can authoritatively decide whether the
+  // remaining budget covers a full live-update cycle — never decided client-side.
+  const rateLimitCheck = await checkRateLimitGate(liveUpdateCost);
+
+    if (rateLimitCheck.rateLimited) {
+    if (hasValidLockoutResetAt(rateLimitCheck)) {
+      enterServerRateLimitState(rateLimitCheck);
+    } else {
+      showError('server');
+    }
+    return;
+  }
 
   try {
     const res = await fetch(`${API_BASE}/api/sol-price`, {
@@ -2657,9 +3460,14 @@ async function fetchLivePrices() {
 
     if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-    if (res.status === 429) {
+        if (res.status === 429) {
       const body = await res.json().catch(() => ({}));
-      enterRateLimitState(body);
+      if (hasValidLockoutResetAt(body)) {
+        enterServerRateLimitState(body);
+        return;
+      }
+
+      showError('server');
       return;
     }
 
@@ -2708,11 +3516,17 @@ async function fetchLivePrices() {
 
       if (signal.aborted || rateLimitedUntil || walletSnapshot !== currentWalletAddress) return;
 
-      if (priceRes.status === 429) {
-        const body = await priceRes.json().catch(() => ({}));
-        enterRateLimitState(body);
-        return;
-      }
+                  if (priceRes.status === 429) {
+  const body = await priceRes.json().catch(() => ({}));
+
+  if (hasValidLockoutResetAt(body)) {
+    enterServerRateLimitState(body);
+    return;
+  }
+
+  showError('server');
+  return;
+}
 
       if (priceRes.ok) {
         const { prices, unpriced } = await priceRes.json();
@@ -2846,7 +3660,7 @@ if (backToTopBtn) {
 // ════════════════════════════════════════
 
 accordionBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
+    btn.addEventListener('click', () => {
     const content = btn.nextElementSibling;
     const arrow = btn.querySelector('.arrow');
     const isOpen = !content.classList.contains('hidden');
@@ -2857,7 +3671,6 @@ accordionBtns.forEach(btn => {
 
 // ════════════════════════════════════════
 // ── 30. OFFLINE DETECTION ──
-// Improvement 10: Differentiate offline from server errors
 // ════════════════════════════════════════
 
 window.addEventListener('offline', () => {
@@ -2866,9 +3679,13 @@ window.addEventListener('offline', () => {
 
 window.addEventListener('online', () => {
   hide(networkErrorMsg);
-  if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval) {
+  if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval && !currentAbortController) {
     fetchLivePrices();
   }
+});
+
+window.addEventListener('pageshow', () => {
+  void restorePersistedRateLimitCountdownOnce();
 });
 
 // ════════════════════════════════════════
@@ -2876,3 +3693,283 @@ window.addEventListener('online', () => {
 // ════════════════════════════════════════
 
 renderSearchHistory();
+void restorePersistedRateLimitCountdownOnce();
+
+// ════════════════════════════════════════
+// ── 32. FEEDBACK WIDGET ──
+// ════════════════════════════════════════
+
+const FEEDBACK_DEFAULT_HELPER =
+  'Send us feedback, suggestions, or bug reports.';
+
+const FEEDBACK_EMPTY_MESSAGE =
+  'Please enter your feedback';
+
+const FEEDBACK_SUCCESS_MESSAGE =
+  'Thanks for your feedback!';
+
+const FEEDBACK_FAILURE_MESSAGE =
+  'Unable to send feedback, please try again later';
+
+const FEEDBACK_TOO_FAST_MESSAGE =
+  'You are submitting too fast. Please wait a moment and try again.';
+
+const FEEDBACK_HELPER_RESET_MS = 5000;
+const FEEDBACK_TIMING_THRESHOLD_MS = 2500;
+
+function clearFeedbackHelperResetTimer() {
+  if (feedbackHelperResetTimer) {
+    clearTimeout(feedbackHelperResetTimer);
+    feedbackHelperResetTimer = null;
+  }
+}
+
+function setFeedbackHelper(
+  message,
+  tone = 'default',
+  resetAfterMs = 0
+) {
+  if (!feedbackHelper) return;
+
+  clearFeedbackHelperResetTimer();
+
+  feedbackHelper.textContent = message;
+
+  feedbackHelper.classList.remove(
+    'feedback-error',
+    'feedback-success',
+    'feedback-warning'
+  );
+
+  if (tone === 'error') {
+    feedbackHelper.classList.add('feedback-error');
+  }
+
+  if (tone === 'success') {
+    feedbackHelper.classList.add('feedback-success');
+  }
+
+  if (tone === 'warning') {
+    feedbackHelper.classList.add('feedback-warning');
+  }
+
+  if (resetAfterMs > 0) {
+    feedbackHelperResetTimer = setTimeout(() => {
+      setFeedbackHelper(FEEDBACK_DEFAULT_HELPER);
+    }, resetAfterMs);
+  }
+}
+
+function closeFeedbackWidget({
+  preserveDraft = true,
+} = {}) {
+  feedbackIsOpen = false;
+
+  feedbackWidget?.classList.remove('is-open');
+  feedbackToggle?.setAttribute('aria-expanded', 'false');
+
+  if (feedbackContent) {
+    hide(feedbackContent);
+  }
+
+  if (!preserveDraft && feedbackText) {
+    feedbackText.value = '';
+  }
+}
+
+function openFeedbackWidget() {
+  feedbackIsOpen = true;
+
+  feedbackWidget?.classList.add('is-open');
+  feedbackToggle?.setAttribute('aria-expanded', 'true');
+
+  show(feedbackContent);
+}
+
+function setFeedbackPageType(pageType) {
+  closeFeedbackWidget({
+    preserveDraft: true,
+  });
+
+  const mount =
+    pageType === 'results'
+      ? feedbackResultsMount
+      : feedbackLandingMount;
+
+  if (
+    feedbackWidget &&
+    mount &&
+    feedbackWidget.parentElement !== mount
+  ) {
+    mount.appendChild(feedbackWidget);
+  }
+}
+
+function isFeedbackTooFast() {
+  const now = Date.now();
+
+  const pageLoadTooFast =
+    Number.isFinite(feedbackPageLoadedAt) &&
+    now - feedbackPageLoadedAt <
+      FEEDBACK_TIMING_THRESHOLD_MS;
+
+  const focusTooFast =
+    Number.isFinite(feedbackFocusedAt) &&
+    now - feedbackFocusedAt <
+      FEEDBACK_TIMING_THRESHOLD_MS;
+
+  return pageLoadTooFast || focusTooFast;
+}
+
+function setFeedbackSubmitting(isSubmitting) {
+  feedbackSubmitting = isSubmitting;
+
+  if (feedbackSend) {
+    feedbackSend.disabled = isSubmitting;
+
+    feedbackSend.innerHTML = isSubmitting
+      ? '<span class="btn-spinner"></span> Sending…'
+      : 'Send';
+  }
+
+  if (feedbackText) {
+    feedbackText.disabled = isSubmitting;
+  }
+}
+
+async function submitFeedback() {
+  if (!feedbackText || feedbackSubmitting) return;
+
+  const feedback = feedbackText.value.trim();
+
+  if (!feedback) {
+    setFeedbackHelper(
+      FEEDBACK_EMPTY_MESSAGE,
+      'error',
+      FEEDBACK_HELPER_RESET_MS
+    );
+    return;
+  }
+
+  if (isFeedbackTooFast()) {
+    setFeedbackHelper(
+      FEEDBACK_TOO_FAST_MESSAGE,
+      'warning',
+      FEEDBACK_HELPER_RESET_MS
+    );
+    return;
+  }
+
+  clearFeedbackHelperResetTimer();
+  setFeedbackHelper(FEEDBACK_DEFAULT_HELPER);
+  setFeedbackSubmitting(true);
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/feedback`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          feedback,
+          website: feedbackWebsite?.value || '',
+          pageLoadedAt: feedbackPageLoadedAt,
+          focusedAt: feedbackFocusedAt,
+        }),
+      }
+    );
+
+    const payload =
+      await response.json().catch(() => ({}));
+
+    if (response.ok && payload.success) {
+      setFeedbackHelper(
+        FEEDBACK_SUCCESS_MESSAGE,
+        'success',
+        FEEDBACK_HELPER_RESET_MS
+      );
+
+      feedbackText.value = '';
+      return;
+    }
+
+    if (
+      response.status === 422 &&
+      payload.code === 'too-fast'
+    ) {
+      setFeedbackHelper(
+        FEEDBACK_TOO_FAST_MESSAGE,
+        'warning',
+        FEEDBACK_HELPER_RESET_MS
+      );
+      return;
+    }
+
+    if (
+      response.status === 400 &&
+      payload.code === 'empty-feedback'
+    ) {
+      setFeedbackHelper(
+        FEEDBACK_EMPTY_MESSAGE,
+        'error',
+        FEEDBACK_HELPER_RESET_MS
+      );
+      return;
+    }
+
+    setFeedbackHelper(
+      FEEDBACK_FAILURE_MESSAGE,
+      'warning',
+      FEEDBACK_HELPER_RESET_MS
+    );
+  } catch {
+    setFeedbackHelper(
+      FEEDBACK_FAILURE_MESSAGE,
+      'warning',
+      FEEDBACK_HELPER_RESET_MS
+    );
+  } finally {
+    setFeedbackSubmitting(false);
+  }
+}
+
+if (
+  feedbackWidget &&
+  feedbackForm &&
+  feedbackToggle &&
+  feedbackText
+) {
+  setFeedbackPageType('landing');
+
+  feedbackToggle.addEventListener('click', () => {
+    if (feedbackSubmitting) return;
+
+    if (feedbackIsOpen) {
+      closeFeedbackWidget({
+        preserveDraft: true,
+      });
+    } else {
+      openFeedbackWidget();
+    }
+  });
+
+  feedbackText.addEventListener('focus', () => {
+    feedbackFocusedAt = Date.now();
+  });
+
+  feedbackText.addEventListener('input', () => {
+    setFeedbackHelper(
+      FEEDBACK_DEFAULT_HELPER
+    );
+  });
+
+  feedbackForm.addEventListener(
+    'submit',
+    (event) => {
+      event.preventDefault();
+      void submitFeedback();
+    }
+  );
+}

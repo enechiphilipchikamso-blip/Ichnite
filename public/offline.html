@@ -84,7 +84,7 @@
       line-height: 1.6;
     }
 
-    /* ── Signal Icon ── */
+    /* ── Signal Icon
     .icon-wrapper {
       position: relative;
       width: 5rem;
@@ -114,6 +114,7 @@
       transform: rotate(-45deg);
       box-shadow: 0 0 12px var(--blue);
     }
+     ── */
 
     /* ── Retry Button ── */
     .retry-btn {
@@ -190,17 +191,20 @@
     </button>
 
     <!-- Footer -->
-    <p class="offline-footer">© 2026 Ichnite. All Rights Reserved</p>
+     <p class="offline-footer">© <span id="copyright-year"></span> Ichnite. All Rights Reserved</p>
 
   </div>
 
   <script>
+      
+    document.getElementById('copyright-year').textContent = new Date().getFullYear();
+  
     // Manual check when user taps button
     function checkConnection() {
       const btn = document.querySelector('.retry-btn');
 
       if (navigator.onLine) {
-        location.replace('/index.html');
+        location.replace(`${BASE_PATH}index.html`);
         return;
       }
 
@@ -215,7 +219,7 @@
 
     // Auto reload when connection is restored
     window.addEventListener('online', () => {
-      location.replace('/index.html');
+      location.replace(`${BASE_PATH}index.html`);
     });
   </script>
 

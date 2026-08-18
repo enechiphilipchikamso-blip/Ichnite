@@ -1,7 +1,7 @@
-// ── Ichnite Service Worker ──
+/// ── Ichnite Service Worker ──
 // IMPORTANT: Change CACHE_VERSION every time you modify any file
 // e.g. v1 → v2 → v3 and so on — this forces the browser to update
-const CACHE_VERSION = 'Ichnite-v34';
+const CACHE_VERSION = 'Ichnite-v35';
 
 // ── Files to cache for offline use ──
 const BASE_PATH = self.location.pathname.replace(/sw\.js$/, '');
@@ -9,10 +9,11 @@ const BASE_PATH = self.location.pathname.replace(/sw\.js$/, '');
 const CACHE_FILES = [
   `${BASE_PATH}`,
   `${BASE_PATH}index.html`,
-  `${BASE_PATH}style.css`,
+  `${BASE_PATH}css/style.css`,
   `${BASE_PATH}app.js`,
   `${BASE_PATH}manifest.json`,
   `${BASE_PATH}offline.html`,
+  `${BASE_PATH}images/logo.svg`,
   `${BASE_PATH}images/logo.png`,
   `${BASE_PATH}images/sol-logo.png`,
   'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap',
@@ -25,10 +26,11 @@ const CACHE_FILES = [
 const LOCAL_FILES = [
   `${BASE_PATH}`,
   `${BASE_PATH}index.html`,
-  `${BASE_PATH}style.css`,
+  `${BASE_PATH}css/style.css`,
   `${BASE_PATH}app.js`,
   `${BASE_PATH}manifest.json`,
   `${BASE_PATH}offline.html`,
+  `${BASE_PATH}images/logo.svg`,
  `${BASE_PATH}images/logo.png`,
 `${BASE_PATH}images/sol-logo.png`,
 ];
