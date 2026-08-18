@@ -204,7 +204,7 @@
       const btn = document.querySelector('.retry-btn');
 
       if (navigator.onLine) {
-        location.replace('/index.html');
+        location.replace(`${BASE_PATH}index.html`);
         return;
       }
 
@@ -219,7 +219,7 @@
 
     // Auto reload when connection is restored
     window.addEventListener('online', () => {
-      location.replace('/index.html');
+      location.replace(`${BASE_PATH}index.html`);
     });
   </script>
 
