@@ -187,7 +187,17 @@ app.set('trust proxy', trustProxySetting);
 // ── Security Middleware — applied before all routes ──
 
 // 1. Helmet — sets secure HTTP headers
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+        imgSrc: ["'self'", 'data:', 'https:'],
+      },
+    },
+  })
+);
 
 const corsOptions = {
   origin(origin, callback) {
@@ -411,7 +421,7 @@ function getRateLimitKey(req) {
   const key = req.ip;
   const activeLockout = getActiveRateLimitLockout(key);
 
-  if (NODE_ENV === 'development') {
+  if (process.env.DEBUG_TRUST_PROXY === 'true') {
     console.log('🔎 Rate-limit key debug:', {
       key,
       reqIp: req.ip,
