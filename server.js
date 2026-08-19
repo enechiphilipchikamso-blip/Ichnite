@@ -443,18 +443,90 @@ function getRateLimitKey(req) {
   return key;
 }
 
+// ── Redis-backed rate-limit store ──
+// MemoryStore keeps hit counts in local process memory, which works on a
+// single persistent process (Codespaces dev) but is NOT shared across
+// Vercel's serverless function instances — each instance gets its own
+// empty counter, so the 100/15min limit is never coherently enforced in
+// production. This backs the counter with the same Upstash Redis instance
+// already used for lockout persistence.
+class RedisRateLimitStore {
+  constructor(redisClient, prefix) {
+    this.redis = redisClient;
+    this.prefix = prefix;
+    this.windowMs = RATE_LIMIT_WINDOW_MS;
+  }
+
+  init(options) {
+    this.windowMs = options.windowMs;
+  }
+
+  _key(key) {
+    return `${this.prefix}${key}`;
+  }
+
+  async increment(key) {
+    const redisKey = this._key(key);
+    const totalHits = await this.redis.incr(redisKey);
+    const windowSeconds = Math.ceil(this.windowMs / 1000);
+    let ttlSeconds = windowSeconds;
+
+    if (totalHits === 1) {
+      await this.redis.expire(redisKey, windowSeconds);
+    } else {
+      const currentTtl = await this.redis.ttl(redisKey);
+      if (Number.isFinite(currentTtl) && currentTtl > 0) {
+        ttlSeconds = currentTtl;
+      } else {
+        await this.redis.expire(redisKey, windowSeconds);
+      }
+    }
+
+    return { totalHits, resetTime: new Date(Date.now() + ttlSeconds * 1000) };
+  }
+
+  async decrement(key) {
+    try {
+      await this.redis.decr(this._key(key));
+    } catch {
+      // Key may not exist yet — nothing to decrement.
+    }
+  }
+
+  async resetKey(key) {
+    await this.redis.del(this._key(key));
+  }
+
+  async get(key) {
+    const redisKey = this._key(key);
+    const [value, ttlSeconds] = await Promise.all([
+      this.redis.get(redisKey),
+      this.redis.ttl(redisKey),
+    ]);
+
+    if (value === null || value === undefined) return undefined;
+
+    return {
+      totalHits: Number(value),
+      resetTime:
+        Number.isFinite(ttlSeconds) && ttlSeconds > 0
+          ? new Date(Date.now() + ttlSeconds * 1000)
+          : undefined,
+    };
+  }
+}
+
 const apiLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS,
   max: RATE_LIMIT_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
-  passOnStoreError: false,
-  store: rateLimitStore,
+  ...(redis
+    ? { store: new RedisRateLimitStore(redis, `${REDIS_KEY_PREFIX}hits:`) }
+    : {}),
   handler: (req, res, next, options) => {
     const rateLimitKey = getRateLimitKey(req);
-    const requestWindowResetAt = getResetAtMillis(
-      req.rateLimit?.resetTime
-    );
+    const requestWindowResetAt = getResetAtMillis(req.rateLimit?.resetTime);
     const lockout = setActiveRateLimitLockout(rateLimitKey);
     const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
 
