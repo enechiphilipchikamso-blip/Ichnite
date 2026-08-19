@@ -813,7 +813,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .faq-b {
   color: var(--solscan-text);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   line-height: 1.6;
   margin: 0;
 
@@ -821,7 +821,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .faq-a {
   color: var(--solscan-text);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   line-height: 1.6;
 }
 

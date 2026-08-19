@@ -1334,7 +1334,7 @@ async function handleResponse(response) {
 
   const body = await response.json().catch(() => null);
 
-  if (response.status === 429) {
+      if (response.status === 429) {
   if (hasValidLockoutResetAt(body)) {
     enterServerRateLimitState(body);
     throw { type: 'ratelimit' };
@@ -3389,7 +3389,7 @@ removeAllById('netWorthPending');
     const msg = document.createElement('p');
     msg.id = 'netWorthPending';
     msg.className = 'empty-msg';
-    msg.textContent = `Value pending: (${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held) pricing pending`;
+    msg.textContent = `Value pending • ${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held • Price pending`;
     totalNetWorth.appendChild(msg);
     return;
   }
@@ -3884,7 +3884,7 @@ async function submitFeedback() {
     const payload =
       await response.json().catch(() => ({}));
 
-    if (response.ok && payload.success) {
+            if (response.ok && payload.success) {
       setFeedbackHelper(
         FEEDBACK_SUCCESS_MESSAGE,
         'success',
@@ -3895,7 +3895,24 @@ async function submitFeedback() {
       return;
     }
 
-    if (
+    if (response.status === 429) {
+      if (hasValidLockoutResetAt(payload)) {
+        enterServerRateLimitState(payload);
+        setFeedbackHelper(
+          FEEDBACK_FAILURE_MESSAGE,
+          'warning',
+          FEEDBACK_HELPER_RESET_MS
+        );
+        return;
+      }
+
+      // Malformed/anomalous 429 with no authoritative lockout timestamp:
+      // fall through to the generic failure message below, same as any
+      // other malformed 429 in this app. Must never invent a client-side
+      // lockout or disable the send button for this case.
+    }
+
+                    if (
       response.status === 422 &&
       payload.code === 'too-fast'
     ) {

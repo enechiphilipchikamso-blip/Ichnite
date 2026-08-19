@@ -1,7 +1,7 @@
 /// ── Ichnite Service Worker ──
 // IMPORTANT: Change CACHE_VERSION every time you modify any file
 // e.g. v1 → v2 → v3 and so on — this forces the browser to update
-const CACHE_VERSION = 'Ichnite-v35';
+const CACHE_VERSION = 'Ichnite-v41';
 
 // ── Files to cache for offline use ──
 const BASE_PATH = self.location.pathname.replace(/sw\.js$/, '');
@@ -111,11 +111,38 @@ self.addEventListener('fetch', (event) => {
   return;
 }
 
+
+// ── Navigation requests — network first, offline fallback ──
+  // Prevents a precached index.html from masking the offline state
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_VERSION).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+          return networkResponse;
+        })
+        .catch((err) => {
+          console.log('Navigation fetch failed, serving offline.html', err);
+          return caches.match(`${BASE_PATH}offline.html`).then((resp) => {
+            if (!resp) {
+              console.error('offline.html is missing from the cache.');
+            }
+            return resp;
+          });
+        })
+    );
+    return;
+  }
+
   const url = new URL(event.request.url);
 
   // ── API calls — always network first ──
   // Never cache live Solana or CoinGecko data
   const isApiCall =
+    url.pathname.includes('/api/') ||
     url.hostname.includes('mainnet-beta.solana.com') ||
     url.hostname.includes('helius-rpc.com') ||
     url.hostname.includes('api.coingecko.com') ||

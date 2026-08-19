@@ -5,7 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: light)">
-  <title>Ichnite - You're Offline</title>
+  <title>Ichnite=offline/?=true</title>
+  <script>
+    function updateOfflineTitle() {
+      const offline = !navigator.onLine;
+      document.title = `Ichnite=offline/?=${offline}`;
+      return offline;
+    }
+
+    // Runs immediately, before CSS/fonts/body parse, so a visitor who is
+    // actually online (e.g. bookmarked/copied this page's direct URL) is
+    // bounced back to the real app as fast as possible.
+    if (!updateOfflineTitle()) {
+      location.replace('index.html');
+    }
+  </script>
+  <link rel="icon" type="image/svg+xml" href="images/logo.svg">
+<link rel="icon" type="image/png" sizes="any" href="images/logo.png">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
   <style>
     /* ── Reset ── */
@@ -32,6 +48,16 @@
   box-sizing: border-box;
   -webkit-tap-highlight-color: rgba(124, 92, 252, 0.4);
       }
+
+    /* Text Selection */
+::selection {
+  background: var(--blue);
+  color: black;
+}
+::-moz-selection {
+  background: var(--blue);
+  color: black;
+}
 
     /* ── Body ── */
     body {
@@ -204,7 +230,8 @@
       const btn = document.querySelector('.retry-btn');
 
       if (navigator.onLine) {
-        location.replace(`${BASE_PATH}index.html`);
+        updateOfflineTitle();
+        location.replace('index.html');
         return;
       }
 
@@ -219,7 +246,14 @@
 
     // Auto reload when connection is restored
     window.addEventListener('online', () => {
-      location.replace(`${BASE_PATH}index.html`);
+      updateOfflineTitle();
+      location.replace('index.html');
+    });
+
+    // Keep the title accurate if the connection drops again while this
+    // page is still open (e.g. a flaky network)
+    window.addEventListener('offline', () => {
+      updateOfflineTitle();
     });
   </script>
 

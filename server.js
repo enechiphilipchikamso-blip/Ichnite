@@ -257,6 +257,10 @@ function getRedisRateLimitKey(rateLimitKey) {
   return `${REDIS_KEY_PREFIX}${rateLimitKey}`;
 }
 
+function getRedisRateLimitHitsKey(rateLimitKey) {
+  return `${REDIS_KEY_PREFIX}hits:${rateLimitKey}`;
+}
+
 function getResetAtMillis(resetTime) {
   if (resetTime instanceof Date) return resetTime.getTime();
   const value = Number(resetTime);
@@ -276,6 +280,16 @@ async function clearPersistedRateLimitLockout(rateLimitKey) {
     await redis.del(getRedisRateLimitKey(rateLimitKey));
   } catch (error) {
     console.warn('⚠️ Redis lockout delete failed:', error.message);
+  }
+}
+
+async function clearPersistedRateLimitWindow(rateLimitKey) {
+  if (!redis) return;
+
+  try {
+    await redis.del(getRedisRateLimitHitsKey(rateLimitKey));
+  } catch (error) {
+    console.warn('⚠️ Redis window-hits delete failed:', error.message);
   }
 }
 
@@ -363,9 +377,14 @@ function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIM
 
   timer.unref?.();
 
-  const entry = { resetAt: nextResetAt, timer };
+    const entry = { resetAt: nextResetAt, timer };
   activeRateLimitLockouts.set(rateLimitKey, entry);
+
+  // Once a lockout exists, the current request-window hit counter is stale by
+  // definition. Remove it explicitly instead of relying on the old window TTL.
+  void clearPersistedRateLimitWindow(rateLimitKey);
   void persistActiveRateLimitLockout(rateLimitKey, nextResetAt);
+
   return entry;
 }
 
@@ -415,6 +434,8 @@ function parseOperationCost(rawValue) {
   return value;
 }
 
+
+
 // Shared key helper so the limiter and the status endpoint read the same user bucket.
 function getRateLimitKey(req) {
   const key = req.ip;
@@ -441,11 +462,124 @@ function getRateLimitKey(req) {
   return key;
 }
 
+// ── Redis-backed rate-limit store ──
+// MemoryStore keeps hit counts in local process memory, which works on a
+// single persistent process (Codespaces dev) but is NOT shared across
+// Vercel's serverless function instances — each instance gets its own
+// empty counter, so the 100/15min limit is never coherently enforced in
+// production. This backs the counter with the same Upstash Redis instance
+// already used for lockout persistence.
+
+// Runs INCR, the first-hit EXPIRE, and the TTL read as a single atomic
+// Redis-side Lua script (via EVAL) instead of 2-3 separate round trips.
+// Without this, INCR and EXPIRE are each atomic individually, but the
+// *sequence* isn't: a concurrent request landing between this key's
+// first INCR and its EXPIRE would read TTL as unset (-1) and re-issue
+// its own EXPIRE relative to its own clock, nudging the window's reset
+// time later than exactly windowMs after the true first hit. The total
+// count itself was never at risk (INCR alone is atomic), only the
+// window boundary's precision under concurrent load.
+const RATE_LIMIT_INCREMENT_SCRIPT = `
+  local totalHits = redis.call('INCR', KEYS[1])
+  if totalHits == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+  end
+  local ttl = redis.call('TTL', KEYS[1])
+  return {totalHits, ttl}
+`;
+
+class RedisRateLimitStore {
+  constructor(redisClient, prefix) {
+    this.redis = redisClient;
+    this.prefix = prefix;
+    this.windowMs = RATE_LIMIT_WINDOW_MS;
+  }
+
+  init(options) {
+    this.windowMs = options.windowMs;
+  }
+
+  _key(key) {
+    return `${this.prefix}${key}`;
+  }
+
+  async increment(key) {
+    const redisKey = this._key(key);
+    const windowSeconds = Math.ceil(this.windowMs / 1000);
+
+    try {
+      const [totalHits, ttl] = await this.redis.eval(
+        RATE_LIMIT_INCREMENT_SCRIPT,
+        [redisKey],
+        [windowSeconds]
+      );
+
+      const ttlSeconds = Number.isFinite(ttl) && ttl > 0 ? ttl : windowSeconds;
+
+      return { totalHits, resetTime: new Date(Date.now() + ttlSeconds * 1000) };
+    } catch (error) {
+      console.warn('⚠️ Redis rate-limit increment failed:', error.message);
+      throw error;
+    }
+  }
+
+  async decrement(key) {
+    try {
+      await this.redis.decr(this._key(key));
+    } catch {
+      // Key may not exist yet — nothing to decrement.
+    }
+  }
+
+  async resetKey(key) {
+    try {
+      await this.redis.del(this._key(key));
+    } catch (error) {
+      console.warn('⚠️ Redis rate-limit resetKey failed:', error.message);
+      throw error;
+    }
+  }
+
+  async get(key) {
+    const redisKey = this._key(key);
+
+    try {
+      const [value, ttlSeconds] = await Promise.all([
+        this.redis.get(redisKey),
+        this.redis.ttl(redisKey),
+      ]);
+
+      if (value === null || value === undefined) return undefined;
+
+      return {
+        totalHits: Number(value),
+        resetTime:
+          Number.isFinite(ttlSeconds) && ttlSeconds > 0
+            ? new Date(Date.now() + ttlSeconds * 1000)
+            : undefined,
+      };
+    } catch (error) {
+      console.warn('⚠️ Redis rate-limit get failed:', error.message);
+      throw error;
+    }
+  }
+}
+
 const apiLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS,
   max: RATE_LIMIT_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
+  // Fail OPEN if Redis has a transient error. Without this, express-rate-limit
+  // defaults to failing CLOSED — and since RedisRateLimitStore.increment()
+  // now rejects on any Redis error, an unhandled Redis blip would 500 every
+  // request across all of /api (apiLimiter is mounted globally below).
+  // Requires express-rate-limit >=7.4.0 (the exact behavior was fixed in
+  // 7.4.1, which is what package.json pins).
+  passOnStoreError: true,
+  ...(redis
+    ? { store: new RedisRateLimitStore(redis, `${REDIS_KEY_PREFIX}hits:`) }
+    : {}),
   handler: (req, res, next, options) => {
     const rateLimitKey = getRateLimitKey(req);
     const requestWindowResetAt = getResetAtMillis(req.rateLimit?.resetTime);
