@@ -415,6 +415,153 @@ function parseOperationCost(rawValue) {
   return value;
 }
 
+class UpstashRateLimitStore {
+  constructor(redisClient, keyPrefix, windowMs) {
+    this.redis = redisClient;
+    this.keyPrefix = keyPrefix;
+    this.windowMs = windowMs;
+    this.localKeys = false;
+  }
+
+  init(options) {
+    this.windowMs = options.windowMs;
+  }
+
+  assertRedisAvailable() {
+    if (!this.redis) {
+      throw new Error(
+        'Distributed rate-limit store is unavailable because Upstash Redis is not configured.'
+      );
+    }
+  }
+
+  getKey(key) {
+    return `${this.keyPrefix}${key}`;
+  }
+
+  async increment(key) {
+    this.assertRedisAvailable();
+
+    const result = await this.redis.eval(
+      `
+        local hits = redis.call('INCR', KEYS[1])
+
+        if hits == 1 then
+          redis.call('PEXPIRE', KEYS[1], ARGV[1])
+        end
+
+        local ttl = redis.call('PTTL', KEYS[1])
+
+        return { hits, ttl }
+      `,
+      [this.getKey(key)],
+      [String(this.windowMs)]
+    );
+
+    const totalHits = Number(result?.[0]);
+    const ttlMs = Number(result?.[1]);
+
+    if (
+      !Number.isInteger(totalHits) ||
+      totalHits < 1 ||
+      !Number.isFinite(ttlMs) ||
+      ttlMs < 0
+    ) {
+      throw new Error(
+        'Distributed rate-limit store returned an invalid increment result.'
+      );
+    }
+
+    return {
+      totalHits,
+      resetTime: new Date(Date.now() + ttlMs),
+    };
+  }
+
+  async get(key) {
+    this.assertRedisAvailable();
+
+    const result = await this.redis.eval(
+      `
+        local value = redis.call('GET', KEYS[1])
+
+        if not value then
+          return nil
+        end
+
+        local ttl = redis.call('PTTL', KEYS[1])
+
+        if ttl <= 0 then
+          return nil
+        end
+
+        return { value, ttl }
+      `,
+      [this.getKey(key)],
+      []
+    );
+
+    if (!result) {
+      return undefined;
+    }
+
+    const totalHits = Number(result?.[0]);
+    const ttlMs = Number(result?.[1]);
+
+    if (
+      !Number.isInteger(totalHits) ||
+      totalHits < 1 ||
+      !Number.isFinite(ttlMs) ||
+      ttlMs < 0
+    ) {
+      throw new Error(
+        'Distributed rate-limit store returned an invalid read result.'
+      );
+    }
+
+    return {
+      totalHits,
+      resetTime: new Date(Date.now() + ttlMs),
+    };
+  }
+
+  async decrement(key) {
+    this.assertRedisAvailable();
+
+    await this.redis.eval(
+      `
+        local value = redis.call('GET', KEYS[1])
+
+        if not value then
+          return 0
+        end
+
+        local hits = tonumber(value)
+
+        if not hits or hits <= 1 then
+          redis.call('DEL', KEYS[1])
+          return 0
+        end
+
+        return redis.call('DECR', KEYS[1])
+      `,
+      [this.getKey(key)],
+      []
+    );
+  }
+
+  async resetKey(key) {
+    this.assertRedisAvailable();
+    await this.redis.del(this.getKey(key));
+  }
+}
+
+const rateLimitStore = new UpstashRateLimitStore(
+  redis,
+  REDIS_KEY_PREFIX,
+  RATE_LIMIT_WINDOW_MS
+);
+
 // Shared key helper so the limiter and the status endpoint read the same user bucket.
 function getRateLimitKey(req) {
   const key = req.ip;
@@ -446,9 +593,13 @@ const apiLimiter = rateLimit({
   max: RATE_LIMIT_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: false,
+  store: rateLimitStore,
   handler: (req, res, next, options) => {
     const rateLimitKey = getRateLimitKey(req);
-    const requestWindowResetAt = getResetAtMillis(req.rateLimit?.resetTime);
+    const requestWindowResetAt = getResetAtMillis(
+      req.rateLimit?.resetTime
+    );
     const lockout = setActiveRateLimitLockout(rateLimitKey);
     const retryAfterSeconds = getSecondsUntil(lockout.resetAt);
 

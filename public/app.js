@@ -3389,7 +3389,7 @@ removeAllById('netWorthPending');
     const msg = document.createElement('p');
     msg.id = 'netWorthPending';
     msg.className = 'empty-msg';
-    msg.textContent = `Value pending: (${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held) pricing pending`;
+    msg.textContent = `Value pending • ${allTokens.length} token${allTokens.length > 1 ? 's' : ''} held • Price pending`;
     totalNetWorth.appendChild(msg);
     return;
   }
