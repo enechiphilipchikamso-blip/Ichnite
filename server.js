@@ -279,6 +279,16 @@ async function clearPersistedRateLimitLockout(rateLimitKey) {
   }
 }
 
+async function clearPersistedRateLimitWindow(rateLimitKey) {
+  if (!redis) return;
+
+  try {
+    await redis.del(`${REDIS_KEY_PREFIX}hits:${rateLimitKey}`);
+  } catch (error) {
+    console.warn('⚠️ Redis window-hits delete failed:', error.message);
+  }
+}
+
 async function persistActiveRateLimitLockout(rateLimitKey, resetAt) {
   if (!redis || !Number.isFinite(resetAt)) return;
 
@@ -366,6 +376,14 @@ function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIM
   const entry = { resetAt: nextResetAt, timer };
   activeRateLimitLockouts.set(rateLimitKey, entry);
   void persistActiveRateLimitLockout(rateLimitKey, nextResetAt);
+  // The window-hits counter belongs to a system the lockout is now
+  // superseding. Delete it explicitly here — the single place a lockout
+  // is created — rather than leaving it to expire on its own original
+  // TTL. This is additive to the existing lockout-first read checks
+  // (getActiveRateLimitLockout / hydrateActiveRateLimitLockout are still
+  // consulted before window remaining, unchanged), not a replacement
+  // for them.
+  void clearPersistedRateLimitWindow(rateLimitKey);
   return entry;
 }
 
