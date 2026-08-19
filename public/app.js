@@ -970,29 +970,9 @@ async function restorePersistedRateLimitCountdownIfNeeded() {
   return true;
 }
 
-function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress) } = {}) {
-  hideAllMessages();
-
-  // Stop any in-flight / background work tied to the current search.
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
-  }
-
-  if (liveUpdateInterval) {
-    clearInterval(liveUpdateInterval);
-    liveUpdateInterval = null;
-  }
-  
-    if (liveUpdateAbortController) {
-    liveUpdateAbortController.abort();
-    liveUpdateAbortController = null;
-  }
-
-  searchBtn.disabled = true;
-  searchBtn.classList.remove('loading');
-  searchBtn.innerHTML = 'Trace';
-
+function renderTemporarilyUnavailableState({
+  showResults = Boolean(currentWalletAddress),
+} = {}) {
   const marketSection = document.getElementById('solMarketSection');
   const marketUnavailable = document.getElementById('solMarketUnavailable');
   const walletAgeRow = document.getElementById('walletAgeRow');
@@ -1064,8 +1044,10 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   if (marketUnavailable) {
     marketUnavailable.textContent = 'Temporarily unavailable';
   }
+
   hide(document.getElementById('solMarketPriceRow'));
   hide(document.getElementById('solMarketChangeRow'));
+
   if (showResults) {
     show(marketSection);
     show(marketUnavailable);
@@ -1080,6 +1062,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   solPriceChange.className = 'sol-change';
 
   walletAgeEl.textContent = 'Temporarily unavailable';
+
   if (showResults) {
     show(walletAgeRow);
   } else {
@@ -1101,6 +1084,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   tokenMsg.className = 'empty-msg';
   tokenMsg.textContent = 'Temporarily unavailable';
   tokenList.replaceChildren(tokenMsg);
+
   if (showResults) {
     show(tokenList);
   } else {
@@ -1116,6 +1100,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   nftMsg.className = 'empty-msg';
   nftMsg.textContent = 'Temporarily unavailable';
   nftList.replaceChildren(nftMsg);
+
   if (showResults) {
     show(nftList);
     show(nftGrid);
@@ -1136,6 +1121,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   barMsg.className = 'empty-msg';
   barMsg.textContent = 'Temporarily unavailable';
   chartWrapper?.appendChild(barMsg);
+
   if (showResults) {
     show(chartWrapper);
   } else {
@@ -1143,10 +1129,12 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   }
 
   hide(txSkeleton);
+
   const txMsg = document.createElement('p');
   txMsg.className = 'empty-msg';
   txMsg.textContent = 'Temporarily unavailable';
   last7txList.replaceChildren(txMsg);
+
   if (showResults) {
     show(last7txList);
     hide(solscanLink);
@@ -1156,6 +1144,42 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
     hide(solscanLink);
     hide(seemore);
   }
+}
+
+function showServerFailureState({
+  showResults = Boolean(currentWalletAddress),
+} = {}) {
+  hideAllMessages();
+  renderTemporarilyUnavailableState({ showResults });
+  showError('server');
+}
+
+function showRateLimitBlockedState({
+  showResults = Boolean(currentWalletAddress),
+} = {}) {
+  hideAllMessages();
+
+  // Stop any in-flight / background work tied to the current search.
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+
+  if (liveUpdateInterval) {
+    clearInterval(liveUpdateInterval);
+    liveUpdateInterval = null;
+  }
+
+  if (liveUpdateAbortController) {
+    liveUpdateAbortController.abort();
+    liveUpdateAbortController = null;
+  }
+
+  searchBtn.disabled = true;
+  searchBtn.classList.remove('loading');
+  searchBtn.innerHTML = 'Trace';
+
+  renderTemporarilyUnavailableState({ showResults });
 }
 
 async function checkRateLimitGate(operationCost = null) {
@@ -3895,7 +3919,19 @@ async function submitFeedback() {
       return;
     }
 
-            if (
+                if (response.status === 429) {
+      if (hasValidLockoutResetAt(payload)) {
+        enterServerRateLimitState(payload);
+      } else {
+        showServerFailureState({
+          showResults: Boolean(currentWalletAddress),
+        });
+      }
+
+      return;
+    }
+
+    if (
       response.status === 422 &&
       payload.code === 'too-fast'
     ) {
