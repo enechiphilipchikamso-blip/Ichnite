@@ -3919,19 +3919,7 @@ async function submitFeedback() {
       return;
     }
 
-        if (response.status === 429) {
-      if (hasValidLockoutResetAt(payload)) {
-        enterServerRateLimitState(payload);
-      } else {
-        showServerFailureState({
-          showResults: Boolean(currentWalletAddress),
-        });
-      }
-
-      return;
-    }
-
-    if (
+            if (
       response.status === 422 &&
       payload.code === 'too-fast'
     ) {
