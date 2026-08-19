@@ -377,9 +377,14 @@ function setActiveRateLimitLockout(rateLimitKey, resetAt = Date.now() + RATE_LIM
 
   timer.unref?.();
 
-  const entry = { resetAt: nextResetAt, timer };
+    const entry = { resetAt: nextResetAt, timer };
   activeRateLimitLockouts.set(rateLimitKey, entry);
+
+  // Once a lockout exists, the current request-window hit counter is stale by
+  // definition. Remove it explicitly instead of relying on the old window TTL.
+  void clearPersistedRateLimitWindow(rateLimitKey);
   void persistActiveRateLimitLockout(rateLimitKey, nextResetAt);
+
   return entry;
 }
 

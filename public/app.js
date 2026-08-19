@@ -3908,7 +3908,7 @@ async function submitFeedback() {
     const payload =
       await response.json().catch(() => ({}));
 
-    if (response.ok && payload.success) {
+        if (response.ok && payload.success) {
       setFeedbackHelper(
         FEEDBACK_SUCCESS_MESSAGE,
         'success',
@@ -3919,17 +3919,39 @@ async function submitFeedback() {
       return;
     }
 
-                if (response.status === 429) {
-      if (hasValidLockoutResetAt(payload)) {
-        enterServerRateLimitState(payload);
-      } else {
-        showServerFailureState({
-          showResults: Boolean(currentWalletAddress),
-        });
-      }
+    if (response.status === 429) {
+  // Feedback always reports its own failed submission, regardless of
+  // whether this 429 also represents a global application lockout.
+  setFeedbackHelper(
+    FEEDBACK_FAILURE_MESSAGE,
+    'error',
+    FEEDBACK_HELPER_RESET_MS
+  );
 
+  try {
+    // Route the same 429 through the shared API response handling so a
+    // valid lockout immediately becomes global application state.
+    await handleResponse(response.clone());
+  } catch (error) {
+    if (error?.type === 'ratelimit') {
+      // Global lockout state has already been established.
       return;
     }
+
+    if (error?.type === 'server') {
+      // Malformed 429: feedback failure is already shown, and the shared
+      // lockout state must NOT be entered.
+      showServerFailureState({
+        showResults: Boolean(currentWalletAddress),
+      });
+      return;
+    }
+
+    throw error;
+  }
+
+  return;
+}
 
     if (
       response.status === 422 &&
