@@ -3919,29 +3919,6 @@ async function submitFeedback() {
       return;
     }
 
-    if (response.status === 429) {
-      setFeedbackHelper(
-        FEEDBACK_FAILURE_MESSAGE,
-        'warning',
-        FEEDBACK_HELPER_RESET_MS
-      );
-
-      // A 429 is global app state, not feedback-local — route it through
-      // the same shared handling search/live-update already use. A valid
-      // lockout payload starts the real countdown, disables search, and
-      // aborts pending/live-update work (via rateLimitedUntil guards
-      // elsewhere). A malformed 429 (no authoritative lockoutResetAt)
-      // must NOT invent a client lockout — it surfaces as the standard
-      // server error banner/card messages, without disabling the button.
-      if (hasValidLockoutResetAt(payload)) {
-        enterServerRateLimitState(payload);
-      } else {
-        showError('server', FAILURE_BANNER_TEXT.server);
-      }
-
-      return;
-    }
-
     setFeedbackHelper(
       FEEDBACK_FAILURE_MESSAGE,
       'warning',
