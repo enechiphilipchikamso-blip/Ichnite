@@ -1353,22 +1353,29 @@ function classifyBackendErrorResponse(body) {
   return backendType === 'solana-delay' ? 'solana-delay' : 'server';
 }
 
+function handleRateLimitPayload(body) {
+  if (!hasValidLockoutResetAt(body)) {
+    return false;
+  }
+
+  enterServerRateLimitState(body);
+  return true;
+}
+
 async function handleResponse(response) {
   if (response.ok) return response.json();
 
   const body = await response.json().catch(() => null);
 
-  if (response.status === 429) {
-  if (hasValidLockoutResetAt(body)) {
-    enterServerRateLimitState(body);
-    throw { type: 'ratelimit' };
-  }
+    if (response.status === 429) {
+    if (handleRateLimitPayload(body)) {
+      throw { type: 'ratelimit' };
+    }
 
-  // An anomalous data-endpoint 429 has no authoritative lockout timestamp.
-  // Treat it as a server failure for the affected card; do not invent a
-  // client lockout or suppress final per-card aggregation.
-  throw { type: 'server' };
-}
+    // An anomalous 429 has no authoritative lockout timestamp.
+    // Treat it as a server failure; never invent a client lockout.
+    throw { type: 'server' };
+  }
 
   if (response.status === 400) {
     hardFailureOverrideActive = true;
@@ -3919,39 +3926,28 @@ async function submitFeedback() {
       return;
     }
 
-    if (response.status === 429) {
-  // Feedback always reports its own failed submission, regardless of
-  // whether this 429 also represents a global application lockout.
-  setFeedbackHelper(
-    FEEDBACK_FAILURE_MESSAGE,
-    'error',
-    FEEDBACK_HELPER_RESET_MS
-  );
+        if (response.status === 429) {
+      // Feedback always reports its own failed submission.
+      setFeedbackHelper(
+        FEEDBACK_FAILURE_MESSAGE,
+        'error',
+        FEEDBACK_HELPER_RESET_MS
+      );
 
-  try {
-    // Route the same 429 through the shared API response handling so a
-    // valid lockout immediately becomes global application state.
-    await handleResponse(response.clone());
-  } catch (error) {
-    if (error?.type === 'ratelimit') {
-      // Global lockout state has already been established.
-      return;
-    }
+      if (handleRateLimitPayload(payload)) {
+        // The same shared lockout path used by search/live-update has
+        // already started the countdown and rendered the global blocked UI.
+        return;
+      }
 
-    if (error?.type === 'server') {
-      // Malformed 429: feedback failure is already shown, and the shared
-      // lockout state must NOT be entered.
+      // A malformed 429 is still a feedback failure, but it is not a valid
+      // global lockout event. Show the normal server/card failure state
+      // without disabling Trace or starting a countdown.
       showServerFailureState({
         showResults: Boolean(currentWalletAddress),
       });
       return;
     }
-
-    throw error;
-  }
-
-  return;
-}
 
     if (
       response.status === 422 &&
