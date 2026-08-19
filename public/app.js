@@ -3898,6 +3898,11 @@ async function submitFeedback() {
     if (response.status === 429) {
       if (hasValidLockoutResetAt(payload)) {
         enterServerRateLimitState(payload);
+        setFeedbackHelper(
+          FEEDBACK_FAILURE_MESSAGE,
+          'warning',
+          FEEDBACK_HELPER_RESET_MS
+        );
         return;
       }
 
