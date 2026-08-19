@@ -3862,6 +3862,28 @@ async function submitFeedback() {
 
   clearFeedbackHelperResetTimer();
   setFeedbackHelper(FEEDBACK_DEFAULT_HELPER);
+
+  // Same proactive check search (line ~1751) and live-update (line ~3444)
+  // already perform before their own request — feedback previously had none,
+  // so it only ever learned about an active lockout reactively from its own
+  // 429, at which point currentWalletAddress may still be empty (landing-page
+  // submit), causing showRateLimitBlockedState to suppress result-card UI.
+  const rateLimitCheck = await checkRateLimitGate();
+
+  if (rateLimitCheck.rateLimited) {
+    if (hasValidLockoutResetAt(rateLimitCheck)) {
+      enterServerRateLimitState(rateLimitCheck);
+    } else {
+      showError('server');
+      setFeedbackHelper(
+        FEEDBACK_FAILURE_MESSAGE,
+        'warning',
+        FEEDBACK_HELPER_RESET_MS
+      );
+    }
+    return;
+  }
+
   setFeedbackSubmitting(true);
 
   try {
