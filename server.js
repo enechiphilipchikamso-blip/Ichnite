@@ -257,10 +257,6 @@ function getRedisRateLimitKey(rateLimitKey) {
   return `${REDIS_KEY_PREFIX}${rateLimitKey}`;
 }
 
-function getRedisRateLimitHitsKey(rateLimitKey) {
-  return `${REDIS_KEY_PREFIX}hits:${rateLimitKey}`;
-}
-
 function getResetAtMillis(resetTime) {
   if (resetTime instanceof Date) return resetTime.getTime();
   const value = Number(resetTime);
@@ -280,16 +276,6 @@ async function clearPersistedRateLimitLockout(rateLimitKey) {
     await redis.del(getRedisRateLimitKey(rateLimitKey));
   } catch (error) {
     console.warn('⚠️ Redis lockout delete failed:', error.message);
-  }
-}
-
-async function clearPersistedRateLimitWindow(rateLimitKey) {
-  if (!redis) return;
-
-  try {
-    await redis.del(getRedisRateLimitHitsKey(rateLimitKey));
-  } catch (error) {
-    console.warn('⚠️ Redis window-hits delete failed:', error.message);
   }
 }
 
