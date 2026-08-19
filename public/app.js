@@ -3895,6 +3895,18 @@ async function submitFeedback() {
       return;
     }
 
+    if (response.status === 429) {
+      if (hasValidLockoutResetAt(payload)) {
+        enterServerRateLimitState(payload);
+        return;
+      }
+
+      // Malformed/anomalous 429 with no authoritative lockout timestamp:
+      // fall through to the generic failure message below, same as any
+      // other malformed 429 in this app. Must never invent a client-side
+      // lockout or disable the send button for this case.
+    }
+
                     if (
       response.status === 422 &&
       payload.code === 'too-fast'
