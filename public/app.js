@@ -1610,14 +1610,20 @@ function resetBarToggleState() {
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
     btn.style.transform = '';
+    btn.setAttribute('aria-pressed', 'false');
   });
-  document.querySelector('[data-range="days"]')?.classList.add('active');
+  const daysToggleBtn = document.querySelector('[data-range="days"]');
+  daysToggleBtn?.classList.add('active');
+  daysToggleBtn?.setAttribute('aria-pressed', 'true');
   hide(yearDropdown);
   currentBarRange = 'days';
   currentYearSelection = 1;
   yearRangeActive = false;
   if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
-  yearOptions.forEach(opt => opt.classList.remove('selected'));
+  yearOptions.forEach(opt => {
+    opt.classList.remove('selected');
+    opt.setAttribute('aria-pressed', 'false');
+  });
 }
 
 function resetAll() {
@@ -3080,6 +3086,7 @@ if (
                   const copyBtn = document.createElement('button');
       copyBtn.className = 'copy-sig-btn';
       copyBtn.title = 'Copy transaction signature';
+      copyBtn.setAttribute('aria-label', 'Copy transaction signature');
       copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
 
               const signature = tx.signature || tx.signatures?.[0] || '';
@@ -3293,9 +3300,10 @@ toggleBtns.forEach(btn => {
     const range = btn.dataset.range;
 
     // Reset all toggles
-    toggleBtns.forEach(b => { b.classList.remove('active'); b.style.transform = ''; });
+    toggleBtns.forEach(b => { b.classList.remove('active'); b.style.transform = ''; b.setAttribute('aria-pressed', 'false'); });
     btn.classList.add('active');
     btn.style.transform = 'scale(1.15)';
+    btn.setAttribute('aria-pressed', 'true');
 
     if (range === 'year') {
       const isOpen = !yearDropdown.classList.contains('hidden');
@@ -3305,15 +3313,19 @@ toggleBtns.forEach(btn => {
           // A year was already picked — keep it active, don't touch the chart
           btn.classList.add('active');
           btn.style.transform = 'scale(1.15)';
+          btn.setAttribute('aria-pressed', 'true');
         } else {
           // Dropdown closed without ever picking a year — no chart change needed,
           // it was never altered in the first place
           btn.style.transform = '';
           btn.classList.remove('active');
+          btn.setAttribute('aria-pressed', 'false');
         }
       } else {
         yearOptions.forEach(opt => {
-          opt.classList.toggle('selected', parseInt(opt.dataset.year) === currentYearSelection && yearRangeActive);
+          const isSelected = parseInt(opt.dataset.year) === currentYearSelection && yearRangeActive;
+          opt.classList.toggle('selected', isSelected);
+          opt.setAttribute('aria-pressed', String(isSelected));
         });
         show(yearDropdown);
       }
@@ -3321,7 +3333,10 @@ toggleBtns.forEach(btn => {
       yearRangeActive = false;
       hide(yearDropdown);
       if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
-      yearOptions.forEach(opt => opt.classList.remove('selected'));
+      yearOptions.forEach(opt => {
+        opt.classList.remove('selected');
+        opt.setAttribute('aria-pressed', 'false');
+      });
       currentBarRange = range;
       renderBarChart(allChartTransactions, range, currentYearSelection);
     }
@@ -3335,6 +3350,10 @@ yearOptions.forEach(option => {
     currentYearSelection = parseInt(option.dataset.year);
     currentBarRange = 'year';
     yearRangeActive = true;
+    yearOptions.forEach(opt => {
+      opt.classList.toggle('selected', opt === option);
+      opt.setAttribute('aria-pressed', String(opt === option));
+    });
     hide(yearDropdown);
     if (yearToggleBtn) yearToggleBtn.textContent = `${currentYearSelection} Year${currentYearSelection > 1 ? 's' : ''}`;
     renderBarChart(allChartTransactions, 'year', currentYearSelection);
@@ -3666,6 +3685,7 @@ accordionBtns.forEach(btn => {
     const isOpen = !content.classList.contains('hidden');
     if (isOpen) { hide(content); arrow?.classList.remove('open'); }
     else { show(content); arrow?.classList.add('open'); }
+    btn.setAttribute('aria-expanded', String(!isOpen));
   });
 });
 

@@ -55,14 +55,15 @@
         type="text"
         id="walletInput"
         placeholder="Paste Solana wallet address..."
+        aria-label="Solana wallet address"
       />
 <button id="clearBtn" class="clear-btn hidden">✕</button>
 <button id="searchBtn">Trace</button>
 </div>
-    <p id="errorMsg" class="error hidden">Invalid Solana address. Please try again.</p>
-    <p id="networkErrorMsg" class="network-error hidden">Solana network is experiencing delays. Please try again shortly.</p>
-    <p id="rateLimitMsg" class="network-error hidden"></p>
-    <p id="emptySearchMsg" class="empty-msg-search  hidden">Please paste a Solana wallet address.</p>
+    <p id="errorMsg" class="error hidden" role="alert">Invalid Solana address. Please try again.</p>
+    <p id="networkErrorMsg" class="network-error hidden" role="alert">Solana network is experiencing delays. Please try again shortly.</p>
+    <p id="rateLimitMsg" class="network-error hidden" role="alert"></p>
+    <p id="emptySearchMsg" class="empty-msg-search  hidden" role="alert">Please paste a Solana wallet address.</p>
     <div id="walletDisplay" class="wallet-display hidden">
   <span id="truncatedAddress" class="truncated-address"></span>
 <button id="copyAddressBtn" aria-label="Copy address" class="copy-address-btn">
@@ -119,7 +120,7 @@
     </div>
     <span id="solBalanceUsd" class="sol-balance-usd"></span>
   </div>
-  <p id="solEmptyMsg" class="empty-msg hidden">This wallet has no SOL balance</p>
+  <p id="solEmptyMsg" class="empty-msg hidden" role="status">This wallet has no SOL balance</p>
 
   <div id="solMarketSection" class="sol-market-section hidden">
   <p class="sol-market-heading">Market</p>
@@ -131,7 +132,7 @@
     <span class="sol-market-label">24h change</span>
     <span id="solPriceChange" class="sol-change"></span>
   </div>
-  <p id="solMarketUnavailable" class="wallet-age-value hidden" style="text-align: center; margin-top: 4px;">Market unavailable</p>
+  <p id="solMarketUnavailable" class="wallet-age-value hidden" role="status" style="text-align: center; margin-top: 4px;">Market unavailable</p>
   <div class="sol-divider"></div>
   <div id="walletAgeRow" class="wallet-age-row hidden">
     <span class="wallet-age-left">
@@ -161,6 +162,7 @@
       id="tokenSearch"
       class="token-search-input"
       placeholder=" Search tokens..."
+      aria-label="Search tokens"
     />
     <div class="select-wrapper">
     <button
@@ -264,20 +266,20 @@
 
       <!-- Chart Toggles -->
       <div class="chart-toggle">
-        <button class="toggleBtn active" data-range="days">Days</button>
-        <button class="toggleBtn" data-range="month">Month</button>
-        <button class="toggleBtn year-btn" data-range="year">Year</button>
+        <button class="toggleBtn active" data-range="days" aria-pressed="true">Days</button>
+        <button class="toggleBtn" data-range="month" aria-pressed="false">Month</button>
+        <button class="toggleBtn year-btn" data-range="year" aria-pressed="false">Year</button>
       </div>
 
       <!-- Year Dropdown -->
       <div id="yearDropdown" class="year-dropdown hidden">
   <p class="year-selector-title">Select how many years</p>
   <div class="year-chip-row">
-    <button class="yearOption year-chip" data-year="1">1</button>
-    <button class="yearOption year-chip" data-year="2">2</button>
-    <button class="yearOption year-chip" data-year="3">3</button>
-    <button class="yearOption year-chip" data-year="4">4</button>
-    <button class="yearOption year-chip" data-year="5">5</button>
+    <button class="yearOption year-chip" data-year="1" aria-pressed="false">1</button>
+    <button class="yearOption year-chip" data-year="2" aria-pressed="false">2</button>
+    <button class="yearOption year-chip" data-year="3" aria-pressed="false">3</button>
+    <button class="yearOption year-chip" data-year="4" aria-pressed="false">4</button>
+    <button class="yearOption year-chip" data-year="5" aria-pressed="false">5</button>
   </div>
 </div>
 
@@ -329,10 +331,10 @@
 
   <!-- Disclaimer — Full Width -->
   <div class="accordion full-width">
-    <button class="accordion-btn">
+    <button class="accordion-btn" aria-expanded="false" aria-controls="disclaimerContent">
       Disclaimer <span class="arrow">▼</span>
     </button>
-    <div class="accordion-content hidden">
+    <div class="accordion-content hidden" id="disclaimerContent">
       <p class="faq-b">Ichnite is a read-only tool. We do not store, collect or save any wallet data.</p>
       <p class="faq-b">All data displayed is publicly available on the Solana blockchain.</p>
       <p class="faq-b">Ichnite is not a financial advisor. Nothing on this platform should be considered financial advice.</p>
@@ -344,10 +346,10 @@
 
   <!-- FAQ — Full Width -->
   <div class="accordion full-width">
-    <button class="accordion-btn">
+    <button class="accordion-btn" aria-expanded="false" aria-controls="faqContent">
       FAQ <span class="arrow">▼</span>
     </button>
-    <div class="accordion-content hidden">
+    <div class="accordion-content hidden" id="faqContent">
       <div class="faq-item">
         <p class="faq-q">What is Ichnite?</p>
         <p class="faq-a">Ichnite is a Solana wallet checker. Paste any Solana wallet address and instantly view SOL balance, token holdings, NFTs and transaction history.</p>

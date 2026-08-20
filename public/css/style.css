@@ -175,6 +175,10 @@ main {
   outline: none;
 }
 
+#searchBtn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 #searchBtn.loading {
   background-color: var(--blue-soft);
   cursor: not-allowed;
@@ -514,6 +518,10 @@ grid-template-columns: repeat(4, 1fr);
   outline: none;
 }
 
+.toggleBtn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .toggleBtn.active {
   transform: scale(1.15);
 }
@@ -572,6 +580,10 @@ grid-template-columns: repeat(4, 1fr);
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+.year-chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .year-chip:active {
@@ -762,6 +774,10 @@ grid-template-columns: repeat(4, 1fr);
   align-items: center;
   transition: background 0.2s;
   outline: none;
+}
+
+.accordion-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .accordion-btn:active {
@@ -971,6 +987,10 @@ grid-template-columns: repeat(4, 1fr);
   outline: none;
 }
 
+.feedback-send-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .feedback-send-btn:active {
   background: #6d50e8;
 }
@@ -1165,6 +1185,10 @@ grid-template-columns: repeat(4, 1fr);
   outline: none;
 }
 
+.clear-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .clear-btn:active {
   border-color: var(--error);
   color: var(--error);
@@ -1204,6 +1228,10 @@ grid-template-columns: repeat(4, 1fr);
   justify-content: center;
 }
 
+.copy-address-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .copy-address-btn i {
   font-size: 1rem;
   pointer-events: none;
@@ -1235,6 +1263,10 @@ grid-template-columns: repeat(4, 1fr);
   transition: opacity 0.3s;
   outline: none;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.share-wallet-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .share-wallet-btn:active {
@@ -1276,6 +1308,10 @@ grid-template-columns: repeat(4, 1fr);
   transition: background 0.2s;
   outline: none;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.history-chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .history-chip:active {
@@ -1505,6 +1541,10 @@ grid-template-columns: repeat(4, 1fr);
   transition: color 0.2s;
   outline: none;
   flex-shrink: 0;
+}
+
+.copy-sig-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .copy-sig-btn:active {
@@ -1834,6 +1874,10 @@ grid-template-columns: repeat(4, 1fr);
   cursor: pointer;
   outline: none;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.nft-group-header:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .nft-group-chevron {
