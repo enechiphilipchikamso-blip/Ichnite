@@ -7,7 +7,7 @@
   --blue: #3b82f6;
   --blue-soft: #2563eb;
   --blue-purple: #7c5cfc;
-  --blue-purple-faded: rgba(124, 92, 252, 0.4);
+  --blue-purple-faded: #8f7dfd;
   --market-heading: rgba(124, 92, 252, 0.25);
   --off-white: #F2F2F5;
   --white: #ffffff;
@@ -126,7 +126,7 @@ main {
 }
 
 #walletInput::placeholder {
-  color: var(--blue-purple-faded);
+  color: rgba(124, 92, 252, 0.8);
 }
 
 #walletInput:focus {
@@ -950,7 +950,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .feedback-content textarea::placeholder {
-  color: var(--blue-purple-faded);
+  color: rgba(124, 92, 252, 0.8);
   opacity: 1;
 }
 
@@ -1368,6 +1368,19 @@ grid-template-columns: repeat(4, 1fr);
   color: var(--off-white);
 }
 
+.history-chip-remove {
+  /* Stops text selection and highlighters */
+  -webkit-user-select: none; 
+  -ms-user-select: none;     
+  user-select: none;         
+
+  /* Stops the iOS long-press pop-up menu */
+  -webkit-touch-callout: none; 
+
+  /* Stops the Android/Chrome tap highlight flash */
+  -webkit-tap-highlight-color: transparent; 
+}
+
 /* ── Token Controls Row ── */
 .token-controls-row {
   display: flex;
@@ -1392,7 +1405,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .token-search-input::placeholder {
-  color: var(--blue-purple-faded);
+  color: rgba(124, 92, 252, 0.8);
 }
 
 .token-search-input:focus {
@@ -1830,7 +1843,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .sol-divider {
   height: 1px;
-  background: rgba(124, 92, 252, 0.15);
+  background: rgba(124, 92, 252, 0.4);
   margin: 12px 0;
 }
 
