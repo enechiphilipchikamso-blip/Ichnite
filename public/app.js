@@ -700,13 +700,18 @@ async function copyToClipboard(text) {
   }
 }
 
+const copyResetTimers = new WeakMap();
+
 function showCopySuccess(btn, originalHTML) {
+  clearTimeout(copyResetTimers.get(btn)); // cancel any pending revert from a prior rapid tap on THIS button
   btn.innerHTML = '<i class="fa-solid fa-check"></i>';
   btn.classList.add('copied');
-  setTimeout(() => {
+  const resetTimer = setTimeout(() => {
     btn.innerHTML = originalHTML;
     btn.classList.remove('copied');
+    copyResetTimers.delete(btn);
   }, CONFIG.COPY_RESET_DELAY);
+  copyResetTimers.set(btn, resetTimer);
 }
 
 function hideAllMessages() {
@@ -3701,13 +3706,18 @@ if (copyAddressBtn) {
 // ════════════════════════════════════════
 
 if (shareWalletBtn) {
+  const shareWalletDefaultText = shareWalletBtn.textContent; // captured once, never re-read from mutated DOM
+  let shareWalletResetTimer = null;
+
   shareWalletBtn.addEventListener('click', async () => {
     if (!currentWalletAddress) return;
     const shareUrl = `${window.location.origin}?wallet=${currentWalletAddress}`;
     await copyToClipboard(shareUrl);
-    const originalText = shareWalletBtn.textContent;
+    clearTimeout(shareWalletResetTimer); // cancel any pending revert from a prior rapid click
     shareWalletBtn.textContent = '✓ Link copied!';
-    setTimeout(() => { shareWalletBtn.textContent = originalText; }, CONFIG.COPY_RESET_DELAY);
+    shareWalletResetTimer = setTimeout(() => {
+      shareWalletBtn.textContent = shareWalletDefaultText;
+    }, CONFIG.COPY_RESET_DELAY);
   });
 }
 
