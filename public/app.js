@@ -499,7 +499,6 @@ const netWorthSkeleton = document.getElementById('netWorthSkeleton');
 const netWorthLabel = document.querySelector('.net-worth-label');
 const netWorthValue = document.getElementById('netWorthValue');
 const solSkeleton = document.getElementById('solSkeleton');
-const solPriceRow = document.getElementById('solPriceRow');
 const solBalanceRow = document.getElementById('solBalanceRow');
 const solLogo = document.getElementById('solLogo');
 const solPriceEl = document.getElementById('solPrice');
@@ -513,7 +512,6 @@ const tokenTotalValue = document.getElementById('tokenTotalValue');
 const tokenSearch = document.getElementById('tokenSearch');
 const tokenSort = document.getElementById('tokenSort');
 const tokenTotalSkeleton = document.getElementById('tokenTotalSkeleton');
-const wrapper = document.querySelector('.select-wrapper');
 const pieSkeleton = document.getElementById('pieSkeleton');
 const pieSpinner = document.getElementById('pieSpinner');
 const pieChart = document.getElementById('pieChart');
@@ -1617,7 +1615,9 @@ function setSearchLoading(isLoading) {
 
 function setRecentAddressesBusy(isBusy) {
   historyChips?.querySelectorAll('.history-chip').forEach((chip) => {
-    chip.classList.toggle('busy', Boolean(isBusy));
+    const busy = Boolean(isBusy);
+    chip.classList.toggle('busy', busy);
+    chip.setAttribute('aria-disabled', String(busy));
   });
 }
 
@@ -2982,21 +2982,24 @@ async function fetchWalletAge(address) {
     const age = formatWalletAge(data.firstTransactionTimestamp);
 
     if (age) {
-      walletAgeEl.textContent = age;
-      solAgeFailed = false;
-    } else {
-      walletAgeEl.textContent = 'Age unavailable';
-      solAgeFailed = true;
-    }
+  walletAgeEl.textContent = age;
+  walletAgeEl.classList.remove('age-error');
+  solAgeFailed = false;
+} else {
+  walletAgeEl.textContent = 'Age unavailable';
+  walletAgeEl.classList.add('age-error');
+  solAgeFailed = true;
+}
     show(document.getElementById('walletAgeRow'));
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     solAgeFailed = true;
-    walletAgeEl.textContent = 'Age unavailable';
-    show(document.getElementById('walletAgeRow'));
-    recordCardFailure('age', error?.type || 'server');
-    console.error('Wallet age error:', error);
+walletAgeEl.textContent = 'Age unavailable';
+walletAgeEl.classList.add('age-error');
+show(document.getElementById('walletAgeRow'));
+recordCardFailure('age', error?.type || 'server');
+console.error('Wallet age error:', error);
   }
 }
 

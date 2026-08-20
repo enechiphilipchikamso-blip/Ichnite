@@ -7,8 +7,15 @@
   --blue: #3b82f6;
   --blue-soft: #2563eb;
   --blue-purple: #7c5cfc;
-  --blue-purple-faded: #8f7dfd;
-  --market-heading: rgba(124, 92, 252, 0.25);
+    --blue-purple-faded: #8f7dfd;
+
+  /* SOL market / wallet-age section */
+  --section-heading: #2563eb;
+  --section-info: #6f8fc9;
+  --section-error: #8f7dfd;
+  --section-divider-height: 1px;
+  --section-divider-color: rgba(124, 92, 252, 0.4);
+
   --off-white: #F2F2F5;
   --white: #ffffff;
   --white-text: rgba(255, 255, 255, 0.9);
@@ -218,14 +225,6 @@ main {
   text-align: center;
 }
 
-/* ── Success Message ── */
-.success-msg {
-  color: var(--success);
-  font-size: 0.9rem;
-  margin-top: 10px;
-  text-align: center;
-}
-
 /* ── Noscript Message ── */
 .noscript-msg {
   text-align: center;
@@ -313,14 +312,6 @@ p {
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
-}
-
-/* ── SOL Balance Section ── */
-.sol-price-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
 }
 
 .sol-price {
@@ -729,35 +720,6 @@ grid-template-columns: repeat(4, 1fr);
   to { transform: rotate(360deg); }
 }
 
-/* ── Offline Page ── */
-.offline-page {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background-color: var(--bg);
-  gap: 20px;
-  text-align: center;
-  padding: 24px;
-}
-
-.offline-logo {
-  width: 80px;
-  height: 80px;
-}
-
-.offline-title {
-  color: var(--blue);
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.offline-msg {
-  color: var(--blue-purple);
-  font-size: 0.95rem;
-}
-
 /* ── Accordion Button ── */
 .accordion-btn {
   width: 100%;
@@ -1157,8 +1119,8 @@ grid-template-columns: repeat(4, 1fr);
 
 .net-worth-label {
   color: var(--blue-purple);
-  font-size: clamp(0.875rem, 2vw, 1rem);
-  font-weight: 600;
+  font-size: clamp(1.175rem, 2vw, 1.5rem);
+  font-weight: 1000;
 }
 
 .net-worth-value {
@@ -1320,10 +1282,11 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .history-chip.busy {
-  opacity: 0.55;
+  opacity: 1;
   color: var(--blue-purple-faded);
   border-color: rgba(124, 92, 252, 0.45);
   background-color: var(--card-bg);
+  cursor: wait;
 }
 
 .history-chip.busy:active {
@@ -1650,23 +1613,6 @@ grid-template-columns: repeat(4, 1fr);
   margin-bottom: 6px;
 }
 
-/* ── NFT Collection Group ── */
-.nft-collection-title {
-  color: var(--blue);
-  font-size: clamp(0.875rem, 2vw, 0.95rem);
-  font-weight: 600;
-  margin-top: 12px;
-  margin-bottom: 6px;
-}
-
-.nft-collection-item {
-  color: var(--blue-purple);
-  font-size: clamp(0.8rem, 2vw, 0.875rem);
-  padding: 4px 0 4px 12px;
-  border-left: 2px solid var(--blue-purple-faded);
-  margin-bottom: 4px;
-}
-
 
 .remove-confirm-overlay {
   position: fixed;
@@ -1825,7 +1771,7 @@ grid-template-columns: repeat(4, 1fr);
 .sol-market-section {
   margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid rgba(124, 92, 252, 0.15);
+  border-top: var(--section-divider-height) solid var(--section-divider-color);
 }
 
 .sol-balance-row {
@@ -1842,8 +1788,9 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .sol-divider {
-  height: 1px;
-  background: rgba(124, 92, 252, 0.4);
+  width: 100%;
+  height: var(--section-divider-height);
+  background: var(--section-divider-color);
   margin: 12px 0;
 }
 
@@ -1857,22 +1804,32 @@ grid-template-columns: repeat(4, 1fr);
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--market-heading);
+  color: var(--section-heading);
   font-size: 0.85rem;
 }
 
 .wallet-age-value {
-  color: var(--market-heading);
+  color: var(--section-info);
   font-size: 0.85rem;
 }
 
+.wallet-age-value.age-error {
+  color: var(--section-error);
+}
+
 .sol-market-heading {
-  color: var(--market-heading);
+  color: var(--section-heading);
   font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 10px;
+}
+
+.section-error-message {
+  color: var(--section-error);
+  text-align: center;
+  margin-top: 4px;
 }
 
 .sol-market-row {
@@ -1899,7 +1856,7 @@ grid-template-columns: repeat(4, 1fr);
   align-items: center;
   gap: 6px;
   margin-top: 12px;
-  color: var(--market-heading);
+  color: var(--section-heading);
   font-size: 0.8rem;
 }
 
@@ -2008,7 +1965,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .token-total-label {
   color: var(--blue-purple);
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
@@ -2194,7 +2151,7 @@ grid-template-columns: repeat(4, 1fr);
     max-width: 55%;
     overflow-wrap: anywhere;
     word-break: break-word;
-    text-align: right;
+    text-align: center;
   }
 
   .tx-row {
