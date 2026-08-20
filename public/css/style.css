@@ -1038,6 +1038,10 @@ grid-template-columns: repeat(4, 1fr);
   }
 }
 
+.history-chip-remove {
+  display: none;
+}
+
 /* ── Laptop - Desktop - Larger Screen ── */
 @media only screen and (min-width: 1024px) {
   body {
@@ -1308,7 +1312,6 @@ grid-template-columns: repeat(4, 1fr);
   font-size: 0.65rem;
   line-height: 1;
   cursor: pointer;
-  display: none;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
