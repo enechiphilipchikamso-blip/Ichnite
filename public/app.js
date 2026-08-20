@@ -3342,7 +3342,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
           y: {
             beginAtZero: true,
             
-            grid: { display: true, drawOnChartArea: true, color: 'rgba(124, 92, 252, 0.1)' },
+            grid: { display: true, drawOnChartArea: true, color: 'rgba(124, 92, 252, 0.4)' },
             border: { display: false },
             
             ticks: { 
