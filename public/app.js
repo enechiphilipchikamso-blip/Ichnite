@@ -1472,7 +1472,11 @@ function renderSearchHistory() {
   label.textContent = 'Recent:';
   historyChips.appendChild(label);
   history.forEach(address => {
+    const wrap = document.createElement('span');
+    wrap.className = 'history-chip-wrap';
+
     const chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'history-chip';
     chip.textContent = truncateAddress(address);
     chip.title = address;
@@ -1481,6 +1485,12 @@ function renderSearchHistory() {
   walletInput.value = address;
   handleSearch();
 });
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        showRemoveConfirm(address);
+      }
+    });
     
     let pressTimer = null;
     chip.addEventListener('touchstart', () => {
@@ -1488,8 +1498,17 @@ function renderSearchHistory() {
     });
     chip.addEventListener('touchend', () => clearTimeout(pressTimer));
     chip.addEventListener('touchmove', () => clearTimeout(pressTimer));
-    
-    historyChips.appendChild(chip);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'history-chip-remove';
+    removeBtn.setAttribute('aria-label', `Remove ${truncateAddress(address)} from history`);
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => showRemoveConfirm(address));
+
+    wrap.appendChild(chip);
+    wrap.appendChild(removeBtn);
+    historyChips.appendChild(wrap);
   });
   show(searchHistory);
 }
@@ -1912,6 +1931,8 @@ async function fetchSolBalance(address) {
     const err = document.createElement('p');
     err.id = 'solBalanceError';
     err.className = 'empty-msg';
+    err.setAttribute('role', 'status');
+    err.setAttribute('aria-live', 'polite');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
 
@@ -1942,6 +1963,8 @@ async function fetchSolBalance(address) {
     const err = document.createElement('p');
     err.id = 'solBalanceError';
     err.className = 'empty-msg';
+    err.setAttribute('role', 'status');
+    err.setAttribute('aria-live', 'polite');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
 
@@ -1994,6 +2017,8 @@ async function fetchSolBalance(address) {
     const err = document.createElement('p');
     err.id = 'solBalanceError';
     err.className = 'empty-msg';
+    err.setAttribute('role', 'status');
+    err.setAttribute('aria-live', 'polite');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
     await reportBackendErrorType(balanceResponse, 'solBalance');
@@ -2094,6 +2119,8 @@ async function fetchTokens(address) {
     const msg = document.createElement('p');
     msg.id = 'tokenListError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load token holdings';
     tokenList.replaceChildren(msg);
   }
@@ -2248,7 +2275,15 @@ if (tokenSort) {
   tokenSort.addEventListener('click', () => openTokenSortOverlay());
 }
 
+// Tracks the active listbox's own teardown so a stray re-entrant call can
+// never leave a duplicate document-level keydown listener attached.
+let activeSortOverlayCleanup = null;
+
 function openTokenSortOverlay() {
+  if (activeSortOverlayCleanup) {
+    activeSortOverlayCleanup();
+  }
+
   const options = [
     { value: 'value', label: 'Sort by Value' },
     { value: 'amount', label: 'Sort by Amount' },
@@ -2258,31 +2293,72 @@ function openTokenSortOverlay() {
   const arrowEl = document.getElementById('tokenSortArrow');
   const labelEl = document.getElementById('tokenSortLabel');
 
-    const existingOverlay = document.querySelector('.sort-overlay');
-  if (existingOverlay) {
-    existingOverlay.remove();
-  }
-    
   const overlay = document.createElement('div');
   overlay.className = 'sort-overlay';
 
   const card = document.createElement('div');
   card.className = 'sort-card';
-  card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-modal', 'true');
+  card.id = 'tokenSortListbox';
+  card.setAttribute('role', 'listbox');
   card.setAttribute('aria-label', 'Token sorting options');
 
-  const handleEscape = (event) => {
-    if (event.key === 'Escape') {
-      overlay.remove();
-      tokenSort.setAttribute('aria-expanded', 'false');
-      document.removeEventListener('keydown', handleEscape);
+  const optionEls = [];
+
+  const closeOverlay = ({ restoreFocus = true } = {}) => {
+    overlay.remove();
+    arrowEl?.classList.remove('open');
+    tokenSort.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('keydown', handleKeydown);
+    activeSortOverlayCleanup = null;
+    if (restoreFocus) tokenSort.focus();
+  };
+
+  const selectOption = (opt) => {
+    tokenSort.dataset.value = opt.value;
+    if (labelEl) labelEl.textContent = opt.label;
+    closeOverlay();
+    renderVisibleTokenRows();
+  };
+
+  const moveFocus = (fromIndex, delta) => {
+    const base = fromIndex === -1 ? 0 : fromIndex;
+    const nextIndex = (base + delta + optionEls.length) % optionEls.length;
+    optionEls[nextIndex].focus();
+  };
+
+  const handleKeydown = (event) => {
+    const activeIndex = optionEls.indexOf(document.activeElement);
+    switch (event.key) {
+      case 'Escape':
+        event.preventDefault();
+        closeOverlay();
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        moveFocus(activeIndex, 1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveFocus(activeIndex, -1);
+        break;
+      case 'Enter':
+      case ' ':
+      case 'Spacebar':
+        event.preventDefault();
+        if (activeIndex !== -1) selectOption(options[activeIndex]);
+        break;
+      default:
+        break;
     }
   };
-  
+
   options.forEach(opt => {
     const row = document.createElement('div');
     row.className = 'sort-option' + (opt.value === currentValue ? ' selected' : '');
+    row.id = `tokenSortOption-${opt.value}`;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(opt.value === currentValue));
+    row.tabIndex = -1;
 
     const label = document.createElement('span');
     label.textContent = opt.label;
@@ -2293,30 +2369,28 @@ function openTokenSortOverlay() {
     row.appendChild(label);
     row.appendChild(radio);
 
-    row.addEventListener('click', () => {
-      tokenSort.dataset.value = opt.value;
-      if (labelEl) labelEl.textContent = opt.label;
-      arrowEl?.classList.remove('open');
-      tokenSort.setAttribute('aria-expanded', 'false');
-      overlay.remove();
-      renderVisibleTokenRows();
-    });
+    row.addEventListener('click', () => selectOption(opt));
 
     card.appendChild(row);
+    optionEls.push(row);
   });
 
   overlay.appendChild(card);
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
-      overlay.remove();
-      arrowEl?.classList.remove('open');
-      tokenSort.setAttribute('aria-expanded', 'false');
+      closeOverlay();
     }
   });
 
   document.body.appendChild(overlay);
   arrowEl?.classList.add('open');
   tokenSort.setAttribute('aria-expanded', 'true');
+
+  document.addEventListener('keydown', handleKeydown);
+  activeSortOverlayCleanup = () => closeOverlay({ restoreFocus: false });
+
+  const initialIndex = Math.max(0, options.findIndex(o => o.value === currentValue));
+  optionEls[initialIndex]?.focus();
 }
 
 // ════════════════════════════════════════
@@ -2639,6 +2713,8 @@ async function fetchNFTs(address) {
     const msg = document.createElement('p');
     msg.id = 'nftListError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load NFTs';
 
     nftList.appendChild(msg);
@@ -2841,6 +2917,8 @@ removeAllById('barChartEmpty');
     const barErrorMsg = document.createElement('p');
     barErrorMsg.id = 'barChartError';
     barErrorMsg.className = 'empty-msg';
+    barErrorMsg.setAttribute('role', 'status');
+    barErrorMsg.setAttribute('aria-live', 'polite');
     barErrorMsg.textContent = 'Unable to load wallet activity chart';
     barChart.closest('.chart-scroll-wrapper')?.appendChild(barErrorMsg);
   }
@@ -2876,6 +2954,8 @@ async function fetchRecentTransactions(address) {
     const msg = document.createElement('p');
     msg.id = 'recentTxError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load transactions';
     last7txList.replaceChildren(msg);
   }
@@ -3384,6 +3464,8 @@ removeAllById('netWorthPending');
     const msg = document.createElement('p');
     msg.id = 'netWorthError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load total net worth';
     totalNetWorth.appendChild(msg);
     return;
@@ -3418,6 +3500,8 @@ removeAllById('netWorthPending');
     const tokenTotal = allTokens.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
     const total = solValueUSD + tokenTotal;
 
+    netWorthValue.removeAttribute('role');
+    netWorthValue.removeAttribute('aria-live');
     netWorthValue.textContent = formatUSD(total);
     netWorthValue.style.color = 'var(--off-white)';
     hide(netWorthSkeleton);
@@ -3430,6 +3514,8 @@ removeAllById('netWorthPending');
   } catch (error) {
     console.error('Net worth error:', error);
     hide(netWorthSkeleton);
+    netWorthValue.setAttribute('role', 'status');
+    netWorthValue.setAttribute('aria-live', 'polite');
     netWorthValue.textContent = 'Unable to load total net worth';
     show(netWorthLabel);
     show(netWorthValue);

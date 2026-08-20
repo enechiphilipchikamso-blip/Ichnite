@@ -1332,6 +1332,42 @@ grid-template-columns: repeat(4, 1fr);
   opacity: 1;
 }
 
+.history-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-chip-remove {
+  background: transparent;
+  border: 1.5px solid var(--blue-purple);
+  color: var(--blue-purple);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+  outline: none;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.history-chip-remove:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
+.history-chip-remove:active {
+  background-color: var(--blue-purple);
+  color: var(--off-white);
+}
+
 /* ── Token Controls Row ── */
 .token-controls-row {
   display: flex;
@@ -1741,6 +1777,11 @@ grid-template-columns: repeat(4, 1fr);
   font-size: 0.95rem;
   cursor: pointer;
   transition: background 0.2s;
+  outline: none;
+}
+
+.sort-option:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .sort-option:active,
