@@ -1827,6 +1827,7 @@ grid-template-columns: repeat(4, 1fr);
 .section-error-message {
   color: var(--section-error);
   text-align: center;
+  font-size: 0.85rem;
   margin-top: 4px;
 }
 
