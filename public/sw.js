@@ -1,5 +1,5 @@
 /// ── Ichnite Service Worker ──
-// IMPORTANT: Change CACHE_VERSION every time you modify any file
+/// IMPORTANT: Change CACHE_VERSION every time you modify any file
 // e.g. v1 → v2 → v3 and so on — this forces the browser to update
 const CACHE_VERSION = 'Ichnite-v67';
 
