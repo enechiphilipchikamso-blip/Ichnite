@@ -364,7 +364,7 @@ p {
   align-items: center;
   gap: 10px;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .token-info-col {
@@ -1586,7 +1586,7 @@ grid-template-columns: repeat(4, 1fr);
   align-items: flex-start;
   gap: 8px;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .tx-row:last-child {
@@ -1862,7 +1862,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .nft-group {
-  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .nft-group:last-child {
