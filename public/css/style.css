@@ -7,16 +7,13 @@
   --blue: #3b82f6;
   --blue-soft: #2563eb;
   --blue-purple: #7c5cfc;
-    --blue-purple-faded: #8f7dfd;
-
-  /* SOL market / wallet-age section */
+  --blue-purple-faded:#7c5cfc;
   --section-heading: #2563eb;
-  --section-info: #8f7dfd;
-  --section-error: #8f7dfd;
+  --section-info: #7c5cfc;
+  --section-error: #7c5cfc;
   --section-divider-height: 1px;
-  --section-divider-heigh: 2px;
+  --market-section-divider-height: 2px;
   --section-divider-color: rgba(124, 92, 252, 0.4);
-
   --off-white: #F2F2F5;
   --white: #ffffff;
   --white-text: rgba(255, 255, 255, 0.9);
@@ -94,7 +91,7 @@ h1 {
 
 .subtitle {
   font-size: clamp(0.875rem, 2vw, 1rem);
-  font-weight: 800;
+  font-weight: 500;
   color: var(--blue-purple);
   margin-top: 6px;
 }
@@ -261,9 +258,10 @@ main {
 }
 
 .card {
-  background-color: var(--card-bg);
+  background-color: #0d0e12;
   border: 1px solid #2A2A2A;
-  border-radius: 20px;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
   padding: 20px;
   margin-bottom: 6px;
   width: 100%;
@@ -503,11 +501,12 @@ grid-template-columns: repeat(4, 1fr);
 
 .toggleBtn {
   background-color: var(--blue-purple);
-  color: var(--white);
+  color: var(--off-white);
   border: 2px solid transparent;
   border-radius: 50px;
   padding: 8px 18px;
   font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   outline: none;
@@ -536,6 +535,7 @@ grid-template-columns: repeat(4, 1fr);
 .year-dropdown p {
   color: var(--off-white);
   font-size: 0.9rem;
+  font-weight: 500;
   margin-bottom: 6px;
 }
 
@@ -1082,9 +1082,10 @@ grid-template-columns: repeat(4, 1fr);
   display: flex;
   flex-direction: column;
   align-items: center;
-  background-color: var(--card-bg);
+  background-color: #0d0e12;
   border: 1px solid #2A2A2A;
-  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  border-radius: 16px;
   padding: 20px;
   width: 100%;
   margin-bottom: 20px;
@@ -1111,8 +1112,8 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .net-worth-label {
-  color: var(--blue-purple);
-  font-size: clamp(0.875rem, 2vw, 1rem);
+  color: var(--blue-soft);
+  font-size: clamp(1rem, 2vw, 1.5rem);
   font-weight: 1000;
 }
 
@@ -1214,6 +1215,7 @@ grid-template-columns: repeat(4, 1fr);
   border-radius: 50px;
   padding: 6px 16px;
   font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
   transition: opacity 0.3s;
   outline: none;
@@ -1764,7 +1766,7 @@ grid-template-columns: repeat(4, 1fr);
 .sol-market-section {
   margin-top: 16px;
   padding-top: 14px;
-  border-top: var(--section-divider-heigh) solid var(--section-divider-color);
+  border-top: var(--market-section-divider-height) solid var(--section-divider-color);
 }
 
 .sol-balance-row {
@@ -1957,7 +1959,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .token-total-label {
-  color: var(--blue-purple);
+  color: var(--blue-soft);
   font-size: 0.8rem;
   font-weight: 600;
 }
