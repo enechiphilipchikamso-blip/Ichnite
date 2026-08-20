@@ -499,7 +499,6 @@ const netWorthSkeleton = document.getElementById('netWorthSkeleton');
 const netWorthLabel = document.querySelector('.net-worth-label');
 const netWorthValue = document.getElementById('netWorthValue');
 const solSkeleton = document.getElementById('solSkeleton');
-const solPriceRow = document.getElementById('solPriceRow');
 const solBalanceRow = document.getElementById('solBalanceRow');
 const solLogo = document.getElementById('solLogo');
 const solPriceEl = document.getElementById('solPrice');
@@ -513,7 +512,6 @@ const tokenTotalValue = document.getElementById('tokenTotalValue');
 const tokenSearch = document.getElementById('tokenSearch');
 const tokenSort = document.getElementById('tokenSort');
 const tokenTotalSkeleton = document.getElementById('tokenTotalSkeleton');
-const wrapper = document.querySelector('.select-wrapper');
 const pieSkeleton = document.getElementById('pieSkeleton');
 const pieSpinner = document.getElementById('pieSpinner');
 const pieChart = document.getElementById('pieChart');
@@ -702,13 +700,18 @@ async function copyToClipboard(text) {
   }
 }
 
+const copyResetTimers = new WeakMap();
+
 function showCopySuccess(btn, originalHTML) {
+  clearTimeout(copyResetTimers.get(btn)); // cancel any pending revert from a prior rapid tap on THIS button
   btn.innerHTML = '<i class="fa-solid fa-check"></i>';
   btn.classList.add('copied');
-  setTimeout(() => {
+  const resetTimer = setTimeout(() => {
     btn.innerHTML = originalHTML;
     btn.classList.remove('copied');
+    copyResetTimers.delete(btn);
   }, CONFIG.COPY_RESET_DELAY);
+  copyResetTimers.set(btn, resetTimer);
 }
 
 function hideAllMessages() {
@@ -1472,7 +1475,11 @@ function renderSearchHistory() {
   label.textContent = 'Recent:';
   historyChips.appendChild(label);
   history.forEach(address => {
+    const wrap = document.createElement('span');
+    wrap.className = 'history-chip-wrap';
+
     const chip = document.createElement('button');
+    chip.type = 'button';
     chip.className = 'history-chip';
     chip.textContent = truncateAddress(address);
     chip.title = address;
@@ -1481,6 +1488,12 @@ function renderSearchHistory() {
   walletInput.value = address;
   handleSearch();
 });
+    chip.addEventListener('keydown', (e) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        showRemoveConfirm(address);
+      }
+    });
     
     let pressTimer = null;
     chip.addEventListener('touchstart', () => {
@@ -1488,8 +1501,17 @@ function renderSearchHistory() {
     });
     chip.addEventListener('touchend', () => clearTimeout(pressTimer));
     chip.addEventListener('touchmove', () => clearTimeout(pressTimer));
-    
-    historyChips.appendChild(chip);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'history-chip-remove';
+    removeBtn.setAttribute('aria-label', `Remove ${truncateAddress(address)} from history`);
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => showRemoveConfirm(address));
+
+    wrap.appendChild(chip);
+    wrap.appendChild(removeBtn);
+    historyChips.appendChild(wrap);
   });
   show(searchHistory);
 }
@@ -1598,7 +1620,9 @@ function setSearchLoading(isLoading) {
 
 function setRecentAddressesBusy(isBusy) {
   historyChips?.querySelectorAll('.history-chip').forEach((chip) => {
-    chip.classList.toggle('busy', Boolean(isBusy));
+    const busy = Boolean(isBusy);
+    chip.classList.toggle('busy', busy);
+    chip.setAttribute('aria-disabled', String(busy));
   });
 }
 
@@ -1610,14 +1634,20 @@ function resetBarToggleState() {
   toggleBtns.forEach(btn => {
     btn.classList.remove('active');
     btn.style.transform = '';
+    btn.setAttribute('aria-pressed', 'false');
   });
-  document.querySelector('[data-range="days"]')?.classList.add('active');
+  const daysToggleBtn = document.querySelector('[data-range="days"]');
+  daysToggleBtn?.classList.add('active');
+  daysToggleBtn?.setAttribute('aria-pressed', 'true');
   hide(yearDropdown);
   currentBarRange = 'days';
   currentYearSelection = 1;
   yearRangeActive = false;
   if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
-  yearOptions.forEach(opt => opt.classList.remove('selected'));
+  yearOptions.forEach(opt => {
+    opt.classList.remove('selected');
+    opt.setAttribute('aria-pressed', 'false');
+  });
 }
 
 function resetAll() {
@@ -1906,6 +1936,8 @@ async function fetchSolBalance(address) {
     const err = document.createElement('p');
     err.id = 'solBalanceError';
     err.className = 'empty-msg';
+    err.setAttribute('role', 'status');
+    err.setAttribute('aria-live', 'polite');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
 
@@ -1936,6 +1968,8 @@ async function fetchSolBalance(address) {
     const err = document.createElement('p');
     err.id = 'solBalanceError';
     err.className = 'empty-msg';
+    err.setAttribute('role', 'status');
+    err.setAttribute('aria-live', 'polite');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
 
@@ -1988,6 +2022,8 @@ async function fetchSolBalance(address) {
     const err = document.createElement('p');
     err.id = 'solBalanceError';
     err.className = 'empty-msg';
+    err.setAttribute('role', 'status');
+    err.setAttribute('aria-live', 'polite');
     err.textContent = 'Unable to load SOL balance';
     solBalanceRow.insertAdjacentElement('afterend', err);
     await reportBackendErrorType(balanceResponse, 'solBalance');
@@ -2088,6 +2124,8 @@ async function fetchTokens(address) {
     const msg = document.createElement('p');
     msg.id = 'tokenListError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load token holdings';
     tokenList.replaceChildren(msg);
   }
@@ -2242,7 +2280,15 @@ if (tokenSort) {
   tokenSort.addEventListener('click', () => openTokenSortOverlay());
 }
 
+// Tracks the active listbox's own teardown so a stray re-entrant call can
+// never leave a duplicate document-level keydown listener attached.
+let activeSortOverlayCleanup = null;
+
 function openTokenSortOverlay() {
+  if (activeSortOverlayCleanup) {
+    activeSortOverlayCleanup();
+  }
+
   const options = [
     { value: 'value', label: 'Sort by Value' },
     { value: 'amount', label: 'Sort by Amount' },
@@ -2252,31 +2298,72 @@ function openTokenSortOverlay() {
   const arrowEl = document.getElementById('tokenSortArrow');
   const labelEl = document.getElementById('tokenSortLabel');
 
-    const existingOverlay = document.querySelector('.sort-overlay');
-  if (existingOverlay) {
-    existingOverlay.remove();
-  }
-    
   const overlay = document.createElement('div');
   overlay.className = 'sort-overlay';
 
   const card = document.createElement('div');
   card.className = 'sort-card';
-  card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-modal', 'true');
+  card.id = 'tokenSortListbox';
+  card.setAttribute('role', 'listbox');
   card.setAttribute('aria-label', 'Token sorting options');
 
-  const handleEscape = (event) => {
-    if (event.key === 'Escape') {
-      overlay.remove();
-      tokenSort.setAttribute('aria-expanded', 'false');
-      document.removeEventListener('keydown', handleEscape);
+  const optionEls = [];
+
+  const closeOverlay = ({ restoreFocus = true } = {}) => {
+    overlay.remove();
+    arrowEl?.classList.remove('open');
+    tokenSort.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('keydown', handleKeydown);
+    activeSortOverlayCleanup = null;
+    if (restoreFocus) tokenSort.focus();
+  };
+
+  const selectOption = (opt) => {
+    tokenSort.dataset.value = opt.value;
+    if (labelEl) labelEl.textContent = opt.label;
+    closeOverlay();
+    renderVisibleTokenRows();
+  };
+
+  const moveFocus = (fromIndex, delta) => {
+    const base = fromIndex === -1 ? 0 : fromIndex;
+    const nextIndex = (base + delta + optionEls.length) % optionEls.length;
+    optionEls[nextIndex].focus();
+  };
+
+  const handleKeydown = (event) => {
+    const activeIndex = optionEls.indexOf(document.activeElement);
+    switch (event.key) {
+      case 'Escape':
+        event.preventDefault();
+        closeOverlay();
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        moveFocus(activeIndex, 1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveFocus(activeIndex, -1);
+        break;
+      case 'Enter':
+      case ' ':
+      case 'Spacebar':
+        event.preventDefault();
+        if (activeIndex !== -1) selectOption(options[activeIndex]);
+        break;
+      default:
+        break;
     }
   };
-  
+
   options.forEach(opt => {
     const row = document.createElement('div');
     row.className = 'sort-option' + (opt.value === currentValue ? ' selected' : '');
+    row.id = `tokenSortOption-${opt.value}`;
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(opt.value === currentValue));
+    row.tabIndex = -1;
 
     const label = document.createElement('span');
     label.textContent = opt.label;
@@ -2287,30 +2374,28 @@ function openTokenSortOverlay() {
     row.appendChild(label);
     row.appendChild(radio);
 
-    row.addEventListener('click', () => {
-      tokenSort.dataset.value = opt.value;
-      if (labelEl) labelEl.textContent = opt.label;
-      arrowEl?.classList.remove('open');
-      tokenSort.setAttribute('aria-expanded', 'false');
-      overlay.remove();
-      renderVisibleTokenRows();
-    });
+    row.addEventListener('click', () => selectOption(opt));
 
     card.appendChild(row);
+    optionEls.push(row);
   });
 
   overlay.appendChild(card);
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
-      overlay.remove();
-      arrowEl?.classList.remove('open');
-      tokenSort.setAttribute('aria-expanded', 'false');
+      closeOverlay();
     }
   });
 
   document.body.appendChild(overlay);
   arrowEl?.classList.add('open');
   tokenSort.setAttribute('aria-expanded', 'true');
+
+  document.addEventListener('keydown', handleKeydown);
+  activeSortOverlayCleanup = () => closeOverlay({ restoreFocus: false });
+
+  const initialIndex = Math.max(0, options.findIndex(o => o.value === currentValue));
+  optionEls[initialIndex]?.focus();
 }
 
 // ════════════════════════════════════════
@@ -2633,6 +2718,8 @@ async function fetchNFTs(address) {
     const msg = document.createElement('p');
     msg.id = 'nftListError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load NFTs';
 
     nftList.appendChild(msg);
@@ -2835,6 +2922,8 @@ removeAllById('barChartEmpty');
     const barErrorMsg = document.createElement('p');
     barErrorMsg.id = 'barChartError';
     barErrorMsg.className = 'empty-msg';
+    barErrorMsg.setAttribute('role', 'status');
+    barErrorMsg.setAttribute('aria-live', 'polite');
     barErrorMsg.textContent = 'Unable to load wallet activity chart';
     barChart.closest('.chart-scroll-wrapper')?.appendChild(barErrorMsg);
   }
@@ -2870,6 +2959,8 @@ async function fetchRecentTransactions(address) {
     const msg = document.createElement('p');
     msg.id = 'recentTxError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load transactions';
     last7txList.replaceChildren(msg);
   }
@@ -2896,21 +2987,24 @@ async function fetchWalletAge(address) {
     const age = formatWalletAge(data.firstTransactionTimestamp);
 
     if (age) {
-      walletAgeEl.textContent = age;
-      solAgeFailed = false;
-    } else {
-      walletAgeEl.textContent = 'Age unavailable';
-      solAgeFailed = true;
-    }
+  walletAgeEl.textContent = age;
+  walletAgeEl.classList.remove('age-error');
+  solAgeFailed = false;
+} else {
+  walletAgeEl.textContent = 'Age unavailable';
+  walletAgeEl.classList.add('age-error');
+  solAgeFailed = true;
+}
     show(document.getElementById('walletAgeRow'));
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     solAgeFailed = true;
-    walletAgeEl.textContent = 'Age unavailable';
-    show(document.getElementById('walletAgeRow'));
-    recordCardFailure('age', error?.type || 'server');
-    console.error('Wallet age error:', error);
+walletAgeEl.textContent = 'Age unavailable';
+walletAgeEl.classList.add('age-error');
+show(document.getElementById('walletAgeRow'));
+recordCardFailure('age', error?.type || 'server');
+console.error('Wallet age error:', error);
   }
 }
 
@@ -3080,6 +3174,7 @@ if (
                   const copyBtn = document.createElement('button');
       copyBtn.className = 'copy-sig-btn';
       copyBtn.title = 'Copy transaction signature';
+      copyBtn.setAttribute('aria-label', 'Copy transaction signature');
       copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i>';
 
               const signature = tx.signature || tx.signatures?.[0] || '';
@@ -3252,7 +3347,7 @@ function renderBarChart(transactions, range, yearCount = 1) {
           y: {
             beginAtZero: true,
             
-            grid: { display: true, drawOnChartArea: true, color: 'rgba(124, 92, 252, 0.1)' },
+            grid: { display: true, drawOnChartArea: true, color: 'rgba(124, 92, 252, 0.4)' },
             border: { display: false },
             
             ticks: { 
@@ -3293,9 +3388,10 @@ toggleBtns.forEach(btn => {
     const range = btn.dataset.range;
 
     // Reset all toggles
-    toggleBtns.forEach(b => { b.classList.remove('active'); b.style.transform = ''; });
+    toggleBtns.forEach(b => { b.classList.remove('active'); b.style.transform = ''; b.setAttribute('aria-pressed', 'false'); });
     btn.classList.add('active');
     btn.style.transform = 'scale(1.15)';
+    btn.setAttribute('aria-pressed', 'true');
 
     if (range === 'year') {
       const isOpen = !yearDropdown.classList.contains('hidden');
@@ -3305,15 +3401,19 @@ toggleBtns.forEach(btn => {
           // A year was already picked — keep it active, don't touch the chart
           btn.classList.add('active');
           btn.style.transform = 'scale(1.15)';
+          btn.setAttribute('aria-pressed', 'true');
         } else {
           // Dropdown closed without ever picking a year — no chart change needed,
           // it was never altered in the first place
           btn.style.transform = '';
           btn.classList.remove('active');
+          btn.setAttribute('aria-pressed', 'false');
         }
       } else {
         yearOptions.forEach(opt => {
-          opt.classList.toggle('selected', parseInt(opt.dataset.year) === currentYearSelection && yearRangeActive);
+          const isSelected = parseInt(opt.dataset.year) === currentYearSelection && yearRangeActive;
+          opt.classList.toggle('selected', isSelected);
+          opt.setAttribute('aria-pressed', String(isSelected));
         });
         show(yearDropdown);
       }
@@ -3321,7 +3421,10 @@ toggleBtns.forEach(btn => {
       yearRangeActive = false;
       hide(yearDropdown);
       if (yearToggleBtn) yearToggleBtn.textContent = 'Year';
-      yearOptions.forEach(opt => opt.classList.remove('selected'));
+      yearOptions.forEach(opt => {
+        opt.classList.remove('selected');
+        opt.setAttribute('aria-pressed', 'false');
+      });
       currentBarRange = range;
       renderBarChart(allChartTransactions, range, currentYearSelection);
     }
@@ -3335,6 +3438,10 @@ yearOptions.forEach(option => {
     currentYearSelection = parseInt(option.dataset.year);
     currentBarRange = 'year';
     yearRangeActive = true;
+    yearOptions.forEach(opt => {
+      opt.classList.toggle('selected', opt === option);
+      opt.setAttribute('aria-pressed', String(opt === option));
+    });
     hide(yearDropdown);
     if (yearToggleBtn) yearToggleBtn.textContent = `${currentYearSelection} Year${currentYearSelection > 1 ? 's' : ''}`;
     renderBarChart(allChartTransactions, 'year', currentYearSelection);
@@ -3365,6 +3472,8 @@ removeAllById('netWorthPending');
     const msg = document.createElement('p');
     msg.id = 'netWorthError';
     msg.className = 'empty-msg';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
     msg.textContent = 'Unable to load total net worth';
     totalNetWorth.appendChild(msg);
     return;
@@ -3399,6 +3508,8 @@ removeAllById('netWorthPending');
     const tokenTotal = allTokens.reduce((sum, t) => sum + getTokenUsdValue(t), 0);
     const total = solValueUSD + tokenTotal;
 
+    netWorthValue.removeAttribute('role');
+    netWorthValue.removeAttribute('aria-live');
     netWorthValue.textContent = formatUSD(total);
     netWorthValue.style.color = 'var(--off-white)';
     hide(netWorthSkeleton);
@@ -3411,6 +3522,8 @@ removeAllById('netWorthPending');
   } catch (error) {
     console.error('Net worth error:', error);
     hide(netWorthSkeleton);
+    netWorthValue.setAttribute('role', 'status');
+    netWorthValue.setAttribute('aria-live', 'polite');
     netWorthValue.textContent = 'Unable to load total net worth';
     show(netWorthLabel);
     show(netWorthValue);
@@ -3593,13 +3706,18 @@ if (copyAddressBtn) {
 // ════════════════════════════════════════
 
 if (shareWalletBtn) {
+  const shareWalletDefaultText = shareWalletBtn.textContent; // captured once, never re-read from mutated DOM
+  let shareWalletResetTimer = null;
+
   shareWalletBtn.addEventListener('click', async () => {
     if (!currentWalletAddress) return;
     const shareUrl = `${window.location.origin}?wallet=${currentWalletAddress}`;
     await copyToClipboard(shareUrl);
-    const originalText = shareWalletBtn.textContent;
+    clearTimeout(shareWalletResetTimer); // cancel any pending revert from a prior rapid click
     shareWalletBtn.textContent = '✓ Link copied!';
-    setTimeout(() => { shareWalletBtn.textContent = originalText; }, CONFIG.COPY_RESET_DELAY);
+    shareWalletResetTimer = setTimeout(() => {
+      shareWalletBtn.textContent = shareWalletDefaultText;
+    }, CONFIG.COPY_RESET_DELAY);
   });
 }
 
@@ -3666,6 +3784,7 @@ accordionBtns.forEach(btn => {
     const isOpen = !content.classList.contains('hidden');
     if (isOpen) { hide(content); arrow?.classList.remove('open'); }
     else { show(content); arrow?.classList.add('open'); }
+    btn.setAttribute('aria-expanded', String(!isOpen));
   });
 });
 

@@ -5,11 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#0a0a0f" media="(prefers-color-scheme: light)">
-  <title>Ichnite=offline/?=true</title>
+  <title>You're Offline · Ichnite</title>
   <script>
     function updateOfflineTitle() {
       const offline = !navigator.onLine;
-      document.title = `Ichnite=offline/?=${offline}`;
+      document.documentElement.dataset.offline = String(offline);
+      document.title = offline
+        ? "You're Offline · Ichnite"
+        : 'Redirecting to Ichnite…';
       return offline;
     }
 
@@ -36,8 +39,9 @@
       --bg: #0a0a0f;
       --card-bg: #12121a;
       --blue: #3b82f6;
-      --blue-purple: #7c5cfc;
-      --blue-purple-faded: rgba(124, 92, 252, 0.4);
+      --blue-btn: #1a6df4;
+      --blue-purple: #8669fc;
+      --blue-purple-faded: #8479af;
       --white: #ffffff;
       --error: #ff4d4d;
       --text-muted: #94a3b8;
@@ -144,7 +148,7 @@
 
     /* ── Retry Button ── */
     .retry-btn {
-      background-color: var(--blue);
+      background-color: var(--blue-btn);
       color: var(--white);
       border: none;
       border-radius: 50px;
@@ -167,10 +171,15 @@
       opacity: 0.6;
       cursor: not-allowed;
     }
+    
+    .retry-btn:focus-visible {
+      outline: 3px solid var(--white);
+      outline-offset: 3px;
+    }
 
     /* ── Footer Text ── */
     .offline-footer {
-      color: var(--blue-purple-faded);
+      color: var(--blue-purple);
       font-size: clamp(0.75rem, 1.5vw, 0.85rem);
       margin-top: 8px;
     }
@@ -178,6 +187,7 @@
 </head>
 <body>
 
+    <main>
   <div class="offline-card">
 
     <!-- Logo -->
@@ -212,7 +222,9 @@
     <button
       type="button"
       class="retry-btn"
-      onclick="checkConnection()">
+      onclick="checkConnection()"
+      aria-live="polite"
+      aria-atomic="true">
       Retry Connection
     </button>
 
@@ -220,6 +232,7 @@
      <p class="offline-footer">© <span id="copyright-year"></span> Ichnite. All Rights Reserved</p>
 
   </div>
+  </main>
 
   <script>
       

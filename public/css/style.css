@@ -7,8 +7,13 @@
   --blue: #3b82f6;
   --blue-soft: #2563eb;
   --blue-purple: #7c5cfc;
-  --blue-purple-faded: rgba(124, 92, 252, 0.4);
-  --market-heading: rgba(124, 92, 252, 0.25);
+  --blue-purple-faded:#7c5cfc;
+  --section-heading: #2563eb;
+  --section-info: #7c5cfc;
+  --section-error: #7c5cfc;
+  --section-divider-height: 1px;
+  --market-section-divider-height: 2px;
+  --section-divider-color: rgba(124, 92, 252, 0.4);
   --off-white: #F2F2F5;
   --white: #ffffff;
   --white-text: rgba(255, 255, 255, 0.9);
@@ -86,6 +91,7 @@ h1 {
 
 .subtitle {
   font-size: clamp(0.875rem, 2vw, 1rem);
+  font-weight: 500;
   color: var(--blue-purple);
   margin-top: 6px;
 }
@@ -126,7 +132,7 @@ main {
 }
 
 #walletInput::placeholder {
-  color: var(--blue-purple-faded);
+  color: rgba(124, 92, 252, 0.8);
 }
 
 #walletInput:focus {
@@ -170,9 +176,15 @@ main {
   border-radius: 50px;
   padding: 10px 24px;
   font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   cursor: pointer;
   transition: background 0.3s;
   outline: none;
+}
+
+#searchBtn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 #searchBtn.loading {
@@ -214,14 +226,6 @@ main {
   text-align: center;
 }
 
-/* ── Success Message ── */
-.success-msg {
-  color: var(--success);
-  font-size: 0.9rem;
-  margin-top: 10px;
-  text-align: center;
-}
-
 /* ── Noscript Message ── */
 .noscript-msg {
   text-align: center;
@@ -254,9 +258,10 @@ main {
 }
 
 .card {
-  background-color: var(--card-bg);
+  background-color: #0d0e12;
   border: 1px solid #2A2A2A;
-  border-radius: 20px;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
   padding: 20px;
   margin-bottom: 6px;
   width: 100%;
@@ -311,14 +316,6 @@ p {
   flex-shrink: 0;
 }
 
-/* ── SOL Balance Section ── */
-.sol-price-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
 .sol-price {
   color: var(--blue);
   font-size: 1.1rem;
@@ -367,7 +364,7 @@ p {
   align-items: center;
   gap: 10px;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .token-info-col {
@@ -505,17 +502,23 @@ grid-template-columns: repeat(4, 1fr);
 .toggleBtn {
   background-color: var(--blue-purple);
   color: var(--off-white);
-  border: none;
+  border: 2px solid transparent;
   border-radius: 50px;
   padding: 8px 18px;
   font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   outline: none;
+}
+
+.toggleBtn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .toggleBtn.active {
   transform: scale(1.15);
+  border-color: var(--blue);
 }
 
 /* ── Year Dropdown ── */
@@ -532,6 +535,7 @@ grid-template-columns: repeat(4, 1fr);
 .year-dropdown p {
   color: var(--off-white);
   font-size: 0.9rem;
+  font-weight: 500;
   margin-bottom: 6px;
 }
 
@@ -553,8 +557,8 @@ grid-template-columns: repeat(4, 1fr);
 
   background-color: var(--blue-purple);
 
-  color: var(--off-white);
-  border: none;
+  color: var(--white);
+  border: 2px solid transparent;
   border-radius: 50px;
 
   padding: 10px 0;
@@ -574,13 +578,18 @@ grid-template-columns: repeat(4, 1fr);
   align-items: center;
 }
 
+.year-chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .year-chip:active {
   background-color: rgba(255, 255, 255, 0.15);
 }
 
 .year-chip.selected {
-  background: rgba(255,255,255,.05);
-  color: var(--blue-purple);
+  background: var(--input-bg);
+  color: var(--white);
+  border: 2px solid var(--blue);
 }
 
 /* ── Bar Chart Scrollable Container ── */
@@ -717,35 +726,6 @@ grid-template-columns: repeat(4, 1fr);
   to { transform: rotate(360deg); }
 }
 
-/* ── Offline Page ── */
-.offline-page {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background-color: var(--bg);
-  gap: 20px;
-  text-align: center;
-  padding: 24px;
-}
-
-.offline-logo {
-  width: 80px;
-  height: 80px;
-}
-
-.offline-title {
-  color: var(--blue);
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
-.offline-msg {
-  color: var(--blue-purple);
-  font-size: 0.95rem;
-}
-
 /* ── Accordion Button ── */
 .accordion-btn {
   width: 100%;
@@ -762,6 +742,10 @@ grid-template-columns: repeat(4, 1fr);
   align-items: center;
   transition: background 0.2s;
   outline: none;
+}
+
+.accordion-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .accordion-btn:active {
@@ -797,7 +781,7 @@ grid-template-columns: repeat(4, 1fr);
   flex-direction: column;
   gap: 4px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(124, 92, 252, 0.2);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .faq-item:last-child {
@@ -813,7 +797,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .faq-b {
   color: var(--solscan-text);
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   line-height: 1.6;
   margin: 0;
 
@@ -821,26 +805,9 @@ grid-template-columns: repeat(4, 1fr);
 
 .faq-a {
   color: var(--solscan-text);
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   line-height: 1.6;
 }
-
-/* ── X Icon ── */
-/*
- .x-link {
-  color: #4a4a4a;
-  font-size: 1.3rem;
-  text-decoration: none;
-  background-color: transparent;
-  padding: 6px 10px;
-  border-radius: 8px;
-  transition: opacity 0.2s;
-}
-
-.x-link:active {
-  opacity: 0.7;
-} 
-*/
 
 /* ── Feedback Widget ── */
 #feedbackLandingMount,
@@ -934,7 +901,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .feedback-content textarea::placeholder {
-  color: var(--blue-purple-faded);
+  color: rgba(124, 92, 252, 0.8);
   opacity: 1;
 }
 
@@ -969,6 +936,10 @@ grid-template-columns: repeat(4, 1fr);
   font-weight: 600;
   cursor: pointer;
   outline: none;
+}
+
+.feedback-send-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .feedback-send-btn:active {
@@ -1067,6 +1038,10 @@ grid-template-columns: repeat(4, 1fr);
   }
 }
 
+.history-chip-remove {
+  display: none;
+}
+
 /* ── Laptop - Desktop - Larger Screen ── */
 @media only screen and (min-width: 1024px) {
   body {
@@ -1080,6 +1055,10 @@ grid-template-columns: repeat(4, 1fr);
   .main-wrapper {
     width: 100%;
     padding: 0 40px;
+  }
+  
+  .history-chip-remove {
+    display: flex;
   }
 
   .chart-scroll-wrapper.chart-reserved {
@@ -1107,9 +1086,10 @@ grid-template-columns: repeat(4, 1fr);
   display: flex;
   flex-direction: column;
   align-items: center;
-  background-color: var(--card-bg);
+  background-color: #0d0e12;
   border: 1px solid #2A2A2A;
-  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  border-radius: 16px;
   padding: 20px;
   width: 100%;
   margin-bottom: 20px;
@@ -1136,9 +1116,9 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .net-worth-label {
-  color: var(--blue-purple);
-  font-size: clamp(0.875rem, 2vw, 1rem);
-  font-weight: 600;
+  color: var(--blue-soft);
+  font-size: clamp(1rem, 2vw, 1.5rem);
+  font-weight: 1000;
 }
 
 .net-worth-value {
@@ -1163,6 +1143,10 @@ grid-template-columns: repeat(4, 1fr);
   flex-shrink: 0;
   transition: border-color 0.3s, color 0.3s;
   outline: none;
+}
+
+.clear-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .clear-btn:active {
@@ -1204,6 +1188,10 @@ grid-template-columns: repeat(4, 1fr);
   justify-content: center;
 }
 
+.copy-address-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .copy-address-btn i {
   font-size: 1rem;
   pointer-events: none;
@@ -1231,10 +1219,15 @@ grid-template-columns: repeat(4, 1fr);
   border-radius: 50px;
   padding: 6px 16px;
   font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
   transition: opacity 0.3s;
   outline: none;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.share-wallet-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .share-wallet-btn:active {
@@ -1278,22 +1271,75 @@ grid-template-columns: repeat(4, 1fr);
   font-family: 'Space Grotesk', sans-serif;
 }
 
+.history-chip:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
 .history-chip:active {
   background-color: var(--blue-purple);
   color: var(--off-white);
 }
 
 .history-chip.busy {
-  opacity: 0.55;
+  opacity: 1;
   color: var(--blue-purple-faded);
   border-color: rgba(124, 92, 252, 0.45);
   background-color: var(--card-bg);
+  cursor: wait;
 }
 
 .history-chip.busy:active {
   background-color: var(--blue-purple);
   color: var(--off-white);
   opacity: 1;
+}
+
+.history-chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.history-chip-remove {
+  background: transparent;
+  border: 1.5px solid var(--blue-purple);
+  color: var(--blue-purple);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  font-size: 0.65rem;
+  line-height: 1;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+  outline: none;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.history-chip-remove:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
+}
+
+.history-chip-remove:active {
+  background-color: var(--blue-purple);
+  color: var(--off-white);
+}
+
+.history-chip-remove {
+  /* Stops text selection and highlighters */
+  -webkit-user-select: none; 
+  -ms-user-select: none;     
+  user-select: none;         
+
+  /* Stops the iOS long-press pop-up menu */
+  -webkit-touch-callout: none; 
+
+  /* Stops the Android/Chrome tap highlight flash */
+  -webkit-tap-highlight-color: transparent; 
 }
 
 /* ── Token Controls Row ── */
@@ -1320,7 +1366,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .token-search-input::placeholder {
-  color: var(--blue-purple-faded);
+  color: rgba(124, 92, 252, 0.8);
 }
 
 .token-search-input:focus {
@@ -1497,7 +1543,7 @@ grid-template-columns: repeat(4, 1fr);
 .copy-sig-btn {
   background: transparent;
   border: none;
-  color: var(--blue-purple-faded);
+  color: var(--blue-purple);
   font-size: 0.85rem;
   cursor: pointer;
   padding: 2px 6px;
@@ -1505,6 +1551,10 @@ grid-template-columns: repeat(4, 1fr);
   transition: color 0.2s;
   outline: none;
   flex-shrink: 0;
+}
+
+.copy-sig-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .copy-sig-btn:active {
@@ -1539,7 +1589,7 @@ grid-template-columns: repeat(4, 1fr);
   align-items: flex-start;
   gap: 8px;
   padding: 10px 0;
-  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .tx-row:last-child {
@@ -1559,23 +1609,6 @@ grid-template-columns: repeat(4, 1fr);
   font-weight: 600;
   margin-top: 14px;
   margin-bottom: 6px;
-}
-
-/* ── NFT Collection Group ── */
-.nft-collection-title {
-  color: var(--blue);
-  font-size: clamp(0.875rem, 2vw, 0.95rem);
-  font-weight: 600;
-  margin-top: 12px;
-  margin-bottom: 6px;
-}
-
-.nft-collection-item {
-  color: var(--blue-purple);
-  font-size: clamp(0.8rem, 2vw, 0.875rem);
-  padding: 4px 0 4px 12px;
-  border-left: 2px solid var(--blue-purple-faded);
-  margin-bottom: 4px;
 }
 
 
@@ -1701,6 +1734,11 @@ grid-template-columns: repeat(4, 1fr);
   font-size: 0.95rem;
   cursor: pointer;
   transition: background 0.2s;
+  outline: none;
+}
+
+.sort-option:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .sort-option:active,
@@ -1731,7 +1769,7 @@ grid-template-columns: repeat(4, 1fr);
 .sol-market-section {
   margin-top: 16px;
   padding-top: 14px;
-  border-top: 1px solid rgba(124, 92, 252, 0.15);
+  border-top: var(--market-section-divider-height) solid var(--section-divider-color);
 }
 
 .sol-balance-row {
@@ -1748,8 +1786,9 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .sol-divider {
-  height: 1px;
-  background: rgba(124, 92, 252, 0.15);
+  width: 100%;
+  height: var(--section-divider-height);
+  background: var(--section-divider-color);
   margin: 12px 0;
 }
 
@@ -1763,22 +1802,33 @@ grid-template-columns: repeat(4, 1fr);
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--market-heading);
+  color: var(--section-heading);
   font-size: 0.85rem;
 }
 
 .wallet-age-value {
-  color: var(--market-heading);
+  color: var(--section-info);
   font-size: 0.85rem;
 }
 
+.wallet-age-value.age-error {
+  color: var(--section-error);
+}
+
 .sol-market-heading {
-  color: var(--market-heading);
+  color: var(--section-heading);
   font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 10px;
+}
+
+.section-error-message {
+  color: var(--section-error);
+  text-align: center;
+  font-size: 0.85rem;
+  margin-top: 4px;
 }
 
 .sol-market-row {
@@ -1805,7 +1855,7 @@ grid-template-columns: repeat(4, 1fr);
   align-items: center;
   gap: 6px;
   margin-top: 12px;
-  color: var(--market-heading);
+  color: var(--section-heading);
   font-size: 0.8rem;
 }
 
@@ -1816,7 +1866,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .nft-group {
-  border-bottom: 1px solid rgba(124, 92, 252, 0.15);
+  border-bottom: 1px solid rgba(124, 92, 252, 0.4);
 }
 
 .nft-group:last-child {
@@ -1834,6 +1884,10 @@ grid-template-columns: repeat(4, 1fr);
   cursor: pointer;
   outline: none;
   font-family: 'Space Grotesk', sans-serif;
+}
+
+.nft-group-header:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue);
 }
 
 .nft-group-chevron {
@@ -1909,7 +1963,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .token-total-label {
-  color: var(--blue-purple);
+  color: var(--blue-soft);
   font-size: 0.8rem;
   font-weight: 600;
 }
@@ -2001,6 +2055,10 @@ grid-template-columns: repeat(4, 1fr);
 @media only screen and (max-width: 480px) {
   .main-wrapper {
     padding: 0 12px;
+  }
+  
+    .search-box .clear-btn {
+    display: none !important;
   }
 
   .search-box {
@@ -2096,7 +2154,7 @@ grid-template-columns: repeat(4, 1fr);
     max-width: 55%;
     overflow-wrap: anywhere;
     word-break: break-word;
-    text-align: right;
+    text-align: center;
   }
 
   .tx-row {
