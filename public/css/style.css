@@ -604,7 +604,7 @@ grid-template-columns: repeat(4, 1fr);
 }
 
 .sol-divider-bleed + h3 {
-  margin-top: 20px;
+  margin-top: 15px;
 }
 
 .chart-scroll-wrapper.chart-reserved {
