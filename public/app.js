@@ -1,4 +1,4 @@
-/// ════════════════════════════════════════
+//// ════════════════════════════════════════
 // ── Ichnite app.js ──
 // Frontend JavaScript — connects to server.js backend
 // Never calls external APIs directly — all calls go through /api routes
