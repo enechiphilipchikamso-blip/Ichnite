@@ -1054,6 +1054,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   totalNetWorth.appendChild(netWorthMsg);
 
   hide(solSkeleton);
+  hide(document.getElementById('marketSkeleton'));
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
   document.getElementById('solBalanceError')?.remove();
@@ -1568,6 +1569,7 @@ function showAllSkeletons() {
   show(netWorthLabel);
   hide(netWorthValue);
   show(solSkeleton);
+  show(document.getElementById('marketSkeleton'));
   hide(document.getElementById('solMarketSection'));
   show(document.getElementById('walletAgeSection'));
   show(document.getElementById('walletAgeSkeleton'));
@@ -1919,6 +1921,7 @@ async function fetchSolBalance(address) {
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
   hide(solSkeleton);
+  hide(document.getElementById('marketSkeleton'));
 
   if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429

@@ -99,9 +99,6 @@
       <div class="skeleton skeleton-line" style="width: 90px;"></div>
       <div class="skeleton skeleton-line short" style="margin-left: auto; width: 60px;"></div>
     </div>
-    <div class="skeleton skeleton-line" style="width: 60px; height: 12px; margin-top: 18px;"></div>
-    <div class="skeleton skeleton-line" style="width: 100%;"></div>
-    <div class="skeleton skeleton-line" style="width: 100%;"></div>
   </div>
 
   <div id="solBalanceRow" class="sol-balance-row hidden">
@@ -120,6 +117,12 @@
   </div>
   <p id="solEmptyMsg" class="empty-msg hidden" role="status">This wallet has no SOL balance</p>
 
+  <div class="sol-divider sol-divider-bleed"></div>
+  <div id="marketSkeleton" class="market-skeleton-wrapper">
+    <div class="skeleton skeleton-line" style="width: 60px; height: 12px;"></div>
+    <div class="skeleton skeleton-line" style="width: 100%;"></div>
+    <div class="skeleton skeleton-line" style="width: 100%; margin-bottom: 0;"></div>
+  </div>
   <div id="solMarketSection" class="sol-market-section hidden">
   <p class="sol-market-heading">Market</p>
   <div id="solMarketPriceRow" class="sol-market-row">
@@ -139,9 +142,10 @@
 </p>
 </div>
   <div id="walletAgeSection" class="wallet-age-section">
-  <div id="walletAgeSkeleton" class="wallet-age-skeleton">
-      <div class="skeleton skeleton-line" style="width: 90px; height: 14px; margin-top: 18px; margin-bottom: 0;"></div>
-      <div class="skeleton skeleton-line short" style="width: 70px; height: 14px; margin-top: 18px; margin-bottom: 0; margin-left: auto;"></div>
+    <div class="sol-divider sol-divider-bleed"></div>
+    <div id="walletAgeSkeleton" class="wallet-age-skeleton">
+      <div class="skeleton skeleton-line" style="width: 90px; height: 14px; margin-bottom: 0;"></div>
+      <div class="skeleton skeleton-line short" style="width: 70px; height: 14px; margin-bottom: 0; margin-left: auto;"></div>
     </div>
     <div id="walletAgeRow" class="wallet-age-row hidden">
       <span class="wallet-age-left">
@@ -306,6 +310,8 @@
 <canvas id="barChart" role="img" aria-label="Wallet activity bar chart" class="hidden"></canvas>
 </div>
     </div>
+
+      <div class="sol-divider sol-divider-bleed"></div>
 
       <!-- Recent Transactions -->
       <h3>Recent Transactions</h3>
