@@ -1085,9 +1085,12 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   solPriceChange.className = 'sol-change';
 
   walletAgeEl.textContent = 'Temporarily unavailable';
+  hide(document.getElementById('walletAgeSkeleton'));
   if (showResults) {
+    show(document.getElementById('walletAgeSection'));
     show(walletAgeRow);
   } else {
+    hide(document.getElementById('walletAgeSection'));
     hide(walletAgeRow);
   }
 
@@ -1566,6 +1569,8 @@ function showAllSkeletons() {
   hide(netWorthValue);
   show(solSkeleton);
   hide(document.getElementById('solMarketSection'));
+  show(document.getElementById('walletAgeSection'));
+  show(document.getElementById('walletAgeSkeleton'));
   hide(document.getElementById('walletAgeRow'));
     document.getElementById('solMarketUnavailable').textContent = 'Market unavailable';
   hide(solBalanceRow);
@@ -3007,8 +3012,9 @@ async function fetchWalletAge(address) {
   walletAgeEl.classList.add('age-error');
   solAgeFailed = true;
 }
+    show(document.getElementById('walletAgeSection'));
+    hide(document.getElementById('walletAgeSkeleton'));
     show(document.getElementById('walletAgeRow'));
-    hide(solSkeleton);
     if (!solCardRevealed) {
       revealCard(solBalanceRow.closest('.card'));
       solCardRevealed = true;
@@ -3019,10 +3025,11 @@ async function fetchWalletAge(address) {
     solAgeFailed = true;
 walletAgeEl.textContent = 'Age unavailable';
 walletAgeEl.classList.add('age-error');
+show(document.getElementById('walletAgeSection'));
+hide(document.getElementById('walletAgeSkeleton'));
 show(document.getElementById('walletAgeRow'));
 recordCardFailure('age', error?.type || 'server');
 console.error('Wallet age error:', error);
-    hide(solSkeleton);
     if (!solCardRevealed) {
       revealCard(solBalanceRow.closest('.card'));
       solCardRevealed = true;

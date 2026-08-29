@@ -11,7 +11,7 @@
   --section-heading: #2563eb;
   --section-info: #7c5cfc;
   --section-error: #7c5cfc;
-  --section-divider-height: 1px;
+  --section-divider-height: 2px;
   --market-section-divider-height: 2px;
   --section-divider-color: rgba(124, 92, 252, 0.4);
   --off-white: #F2F2F5;
@@ -1790,6 +1790,19 @@ grid-template-columns: repeat(4, 1fr);
   height: var(--section-divider-height);
   background: var(--section-divider-color);
   margin: 12px 0;
+}
+
+.wallet-age-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: var(--section-divider-height) solid var(--section-divider-color);
+}
+
+.wallet-age-skeleton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .wallet-age-row {
