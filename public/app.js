@@ -265,6 +265,7 @@ let tokenCardRevealed = false;
 let solBalanceFailed = false;
 let solPriceFailed = false;
 let solAgeFailed = false;
+let solCardRevealed = false;
 let inputValidTimeout = null;
 let failedFetchCount = 0; // legacy — superseded by cardFailureOutcomes/finalizeCardFailures, left in place (unread, harmless)
 let cardFailureOutcomes = {};
@@ -1031,6 +1032,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   netWorthRevealed = false;
   tokenCardRevealed = false;
   barCardRevealed = false;
+  solCardRevealed = false;
   solBalanceFailed = true;
   solPriceFailed = true;
   solAgeFailed = true;
@@ -1052,6 +1054,7 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   totalNetWorth.appendChild(netWorthMsg);
 
   hide(solSkeleton);
+  hide(document.getElementById('marketSkeleton'));
   hide(solBalanceRow);
   hide(document.getElementById('solEmptyMsg'));
   document.getElementById('solBalanceError')?.remove();
@@ -1083,9 +1086,12 @@ function showRateLimitBlockedState({ showResults = Boolean(currentWalletAddress)
   solPriceChange.className = 'sol-change';
 
   walletAgeEl.textContent = 'Temporarily unavailable';
+  hide(document.getElementById('walletAgeSkeleton'));
   if (showResults) {
+    show(document.getElementById('walletAgeSection'));
     show(walletAgeRow);
   } else {
+    hide(document.getElementById('walletAgeSection'));
     hide(walletAgeRow);
   }
 
@@ -1563,7 +1569,10 @@ function showAllSkeletons() {
   show(netWorthLabel);
   hide(netWorthValue);
   show(solSkeleton);
+  show(document.getElementById('marketSkeleton'));
   hide(document.getElementById('solMarketSection'));
+  show(document.getElementById('walletAgeSection'));
+  show(document.getElementById('walletAgeSkeleton'));
   hide(document.getElementById('walletAgeRow'));
     document.getElementById('solMarketUnavailable').textContent = 'Market unavailable';
   hide(solBalanceRow);
@@ -1838,6 +1847,7 @@ const rateLimitCheck = await checkRateLimitGate(CONFIG.TRACE_REQUEST_COST_MAX);
     netWorthRevealed = false;
     tokenCardRevealed = false;
     barCardRevealed = false;
+    solCardRevealed = false;
     solBalanceFailed = false;
     solPriceFailed = false;
     solAgeFailed = false;
@@ -1911,6 +1921,7 @@ async function fetchSolBalance(address) {
   const balanceResponse = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
 
   hide(solSkeleton);
+  hide(document.getElementById('marketSkeleton'));
 
   if (priceResponse?.status === 429 || balanceResponse?.status === 429) {
     const rateLimitBody = priceResponse?.status === 429
@@ -1947,7 +1958,10 @@ async function fetchSolBalance(address) {
     show(document.getElementById('solMarketUnavailable'));
     hide(solBalanceUsd);
 
-    revealCard(solBalanceRow.closest('.card'));
+    if (!solCardRevealed) {
+      revealCard(solBalanceRow.closest('.card'));
+      solCardRevealed = true;
+    }
     return;
   }
 
@@ -1987,7 +2001,10 @@ async function fetchSolBalance(address) {
 
     recordCardFailure('solBalance', 'server');
     recordCardFailure('market', 'server');
-    revealCard(solBalanceRow.closest('.card'));
+    if (!solCardRevealed) {
+      revealCard(solBalanceRow.closest('.card'));
+      solCardRevealed = true;
+    }
     return;
   }
 
@@ -2069,7 +2086,10 @@ async function fetchSolBalance(address) {
     await reportBackendErrorType(priceResponse, 'market');
   }
 
-  revealCard(solBalanceRow.closest('.card'));
+  if (!solCardRevealed) {
+    revealCard(solBalanceRow.closest('.card'));
+    solCardRevealed = true;
+  }
   solFetchFailed = solBalanceFailed && solPriceFailed;
 }
 
@@ -2995,16 +3015,28 @@ async function fetchWalletAge(address) {
   walletAgeEl.classList.add('age-error');
   solAgeFailed = true;
 }
+    show(document.getElementById('walletAgeSection'));
+    hide(document.getElementById('walletAgeSkeleton'));
     show(document.getElementById('walletAgeRow'));
+    if (!solCardRevealed) {
+      revealCard(solBalanceRow.closest('.card'));
+      solCardRevealed = true;
+    }
   } catch (error) {
     if (error?.type === 'ratelimit' || error?.name === 'AbortError' || rateLimitedUntil) return;
 
     solAgeFailed = true;
 walletAgeEl.textContent = 'Age unavailable';
 walletAgeEl.classList.add('age-error');
+show(document.getElementById('walletAgeSection'));
+hide(document.getElementById('walletAgeSkeleton'));
 show(document.getElementById('walletAgeRow'));
 recordCardFailure('age', error?.type || 'server');
 console.error('Wallet age error:', error);
+    if (!solCardRevealed) {
+      revealCard(solBalanceRow.closest('.card'));
+      solCardRevealed = true;
+    }
   }
 }
 
