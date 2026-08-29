@@ -11,9 +11,9 @@
   --section-heading: #2563eb;
   --section-info: #7c5cfc;
   --section-error: #7c5cfc;
-  --section-divider-height: 2px;
-  --market-section-divider-height: 2px;
-  --section-divider-color: rgba(124, 92, 252, 0.4);
+  --section-divider-height: 1px;
+  --market-section-divider-height: 1px;
+  --section-divider-color: #2A2A2A;
   --off-white: #F2F2F5;
   --white: #ffffff;
   --white-text: rgba(255, 255, 255, 0.9);
