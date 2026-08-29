@@ -1628,6 +1628,7 @@ grid-template-columns: repeat(4, 1fr);
 
 .remove-confirm-card {
   background: var(--card-bg);
+  border: 1px solid #2A2A2A;
   border-radius: 20px;
   padding: 24px;
   max-width: 320px;
