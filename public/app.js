@@ -573,6 +573,44 @@ function hide(el) {
   if (el) el.classList.add('hidden');
 }
 
+// Reference-counted body scroll lock — used by any full-viewport overlay
+// (remove-confirm dialog, token sort dropdown, etc.) so the page behind
+// them cannot scroll while they're open. Reference-counted so scrolling
+// is only re-enabled once every open overlay has been closed, even if
+// two ever end up open in an overlapping sequence.
+//
+// Plain `overflow: hidden` on body is NOT enough on iOS Safari — touch
+// drag gestures can still scroll the page behind a fixed-position overlay
+// even with overflow hidden set. The reliable cross-browser fix is to
+// pin body in place at its current scroll offset with position: fixed,
+// then restore the exact scroll position when unlocking.
+let scrollLockCount = 0;
+let scrollLockSavedY = 0;
+
+function lockBodyScroll() {
+  if (scrollLockCount === 0) {
+    scrollLockSavedY = window.scrollY || window.pageYOffset || 0;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollLockSavedY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.width = '100%';
+  }
+  scrollLockCount++;
+}
+
+function unlockBodyScroll() {
+  scrollLockCount = Math.max(0, scrollLockCount - 1);
+  if (scrollLockCount === 0) {
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.left = '';
+    document.body.style.right = '';
+    document.body.style.width = '';
+    window.scrollTo(0, scrollLockSavedY);
+  }
+}
+
 function revealCard(cardEl) {
   if (!cardEl) return;
   cardEl.classList.remove('card-reveal');
@@ -1534,6 +1572,11 @@ function showRemoveConfirm(addressToRemove) {
   text.className = 'remove-confirm-text';
   text.textContent = `Remove ${truncateAddress(addressToRemove)} from Recent Addresses?`;
 
+  const closeRemoveConfirm = () => {
+    overlay.remove();
+    unlockBodyScroll();
+  };
+
   const removeBtn = document.createElement('button');
   removeBtn.className = 'remove-confirm-btn';
   removeBtn.textContent = 'Remove';
@@ -1541,19 +1584,20 @@ function showRemoveConfirm(addressToRemove) {
     let history = getSearchHistory().filter(a => a !== addressToRemove);
     localStorage.setItem('IchniteHistory', JSON.stringify(history));
     renderSearchHistory();
-    document.body.removeChild(overlay);
+    closeRemoveConfirm();
   });
 
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'remove-confirm-cancel';
   cancelBtn.textContent = 'Cancel';
-  cancelBtn.addEventListener('click', () => document.body.removeChild(overlay));
+  cancelBtn.addEventListener('click', closeRemoveConfirm);
 
   card.appendChild(text);
   card.appendChild(removeBtn);
   card.appendChild(cancelBtn);
   overlay.appendChild(card);
   document.body.appendChild(overlay);
+  lockBodyScroll();
 }
 
 // ════════════════════════════════════════
@@ -2331,6 +2375,7 @@ function openTokenSortOverlay() {
 
   const closeOverlay = ({ restoreFocus = true } = {}) => {
     overlay.remove();
+    unlockBodyScroll();
     arrowEl?.classList.remove('open');
     tokenSort.setAttribute('aria-expanded', 'false');
     document.removeEventListener('keydown', handleKeydown);
@@ -2408,6 +2453,7 @@ function openTokenSortOverlay() {
   });
 
   document.body.appendChild(overlay);
+  lockBodyScroll();
   arrowEl?.classList.add('open');
   tokenSort.setAttribute('aria-expanded', 'true');
 
