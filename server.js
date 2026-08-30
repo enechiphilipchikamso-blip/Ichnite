@@ -602,6 +602,24 @@ const apiLimiter = rateLimit({
   },
 });
 
+// ── Ping / health-check endpoint ──
+// Registered BEFORE app.use('/api', apiLimiter) below, and explicitly
+// exempted from the lockout-check middleware too (see req.path check
+// added below), for the same reason /api/rate-limit-status is exempt:
+// this route exists to verify basic reachability, so it must never be
+// blockable by the rate-limit/lockout state it has nothing to do with.
+// Does no upstream/RPC/Redis work — just confirms the server process is
+// up and can respond, as cheaply and quickly as possible.
+//
+// The response body is an exact, fixed shape ({ ok: true }) on purpose —
+// the frontend verifies this exact shape, not just a 2xx status, so a
+// captive portal or proxy that intercepts the request and returns its
+// own "successful-looking" page is still correctly detected as NOT a
+// real connection, rather than being mistaken for one.
+app.get('/api/ping', (req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 // ── Rate-limit status endpoint ──
 // Registered BEFORE app.use('/api', apiLimiter) below, so requests to this
 // path never pass through the limiter middleware — it can't be blocked,
@@ -703,7 +721,7 @@ app.get('/api/rate-limit-status', async (req, res) => {
 });
 
 app.use('/api', async (req, res, next) => {
-  if (req.path === '/rate-limit-status') {
+  if (req.path === '/rate-limit-status' || req.path === '/ping') {
     return next();
   }
 
