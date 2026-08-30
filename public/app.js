@@ -3969,6 +3969,21 @@ const handleConnectivityChange = debounce(async () => {
 window.addEventListener('offline', handleConnectivityChange);
 window.addEventListener('online', handleConnectivityChange);
 
+// setInterval-based polling (startConnectivityRecoveryPoll) can be paused
+// or throttled by the browser while the page is backgrounded/screen is
+// locked — confirmed platform behavior, most aggressive on mobile Safari,
+// which suspends timers shortly after backgrounding. Without this, a user
+// who backgrounds the app while the offline banner is showing and returns
+// after connectivity is restored could still see a stale banner until the
+// next (possibly delayed) poll tick. Forcing a check on visibilitychange
+// closes that gap by re-checking the instant the page is foregrounded
+// again, instead of waiting on the timer.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !networkErrorMsg.classList.contains('hidden')) {
+    handleConnectivityChange();
+  }
+});
+
 window.addEventListener('pageshow', () => {
   void restorePersistedRateLimitCountdownOnce();
 });
