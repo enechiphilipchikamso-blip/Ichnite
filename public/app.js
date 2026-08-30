@@ -4056,8 +4056,32 @@ window.addEventListener('online', handleConnectivityChange);
 // next (possibly delayed) poll tick. Forcing a check on visibilitychange
 // closes that gap by re-checking the instant the page is foregrounded
 // again, instead of waiting on the timer.
+// Cheap first-pass check on returning to the foreground: read the local,
+// free navigator.onLine property (no network cost) rather than always
+// firing a real /api/ping. This covers the gap where real connectivity
+// silently changed while backgrounded without the browser ever firing
+// its own offline/online event (e.g. a VPN's virtual network interface
+// staying "up" even though the underlying connection died — the OS
+// heuristic doesn't always notice or report that transition). We only
+// escalate to the real, network-cost verification (handleConnectivityChange,
+// which calls verifyRealConnectivity) when this free signal disagrees
+// with what the banner currently shows, or reports "offline" — never on
+// every single foreground return regardless of state, and never on a
+// recurring timer.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !networkErrorMsg.classList.contains('hidden')) {
+  if (document.visibilityState !== 'visible') return;
+
+  const bannerShowing = !networkErrorMsg.classList.contains('hidden');
+  const cheapSignalSaysOffline = !navigator.onLine;
+
+  // Escalate to a real check whenever the free signal disagrees with
+  // the banner's current state — either direction:
+  //  - banner hidden but navigator.onLine now says offline: something
+  //    may have broken while backgrounded, confirm with a real ping.
+  //  - banner showing but navigator.onLine now says online: the
+  //    interface may have recovered while backgrounded, confirm before
+  //    keeping the user stuck looking at a stale banner.
+  if (cheapSignalSaysOffline !== bannerShowing) {
     handleConnectivityChange();
   }
 });
