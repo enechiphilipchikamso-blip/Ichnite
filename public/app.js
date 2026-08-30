@@ -598,7 +598,22 @@ function debounce(fn, delayMs) {
 // response body — not just an HTTP 2xx status — so a captive portal or
 // intercepting proxy returning its own "successful-looking" page is still
 // correctly treated as NOT a real connection.
-async function verifyRealConnectivity() {
+// Result shape distinguishes three genuinely different situations, since
+// treating them all as one flat "offline" is what caused the banner to
+// get stuck retrying forever on an unexpected non-2xx response (e.g. a
+// 429 from an intermediary the app itself never issues — server.js
+// explicitly exempts /api/ping from its own rate-limit/lockout logic, so
+// a 429 here can only be coming from something outside this app, such as
+// a hosting platform's edge/proxy layer):
+//   'online'     — got exactly the expected 200 + { ok: true } body.
+//   'offline'    — the request itself failed at the network level, or
+//                  timed out. This is a real signal of no connectivity.
+//   'unexpected' — got A response, just not the one we expect (wrong
+//                  status like 429, or a 200 with a different body, e.g.
+//                  a captive portal or proxy page). This is NOT proof of
+//                  being offline — the server was reachable, something
+//                  just intercepted or altered the response.
+async function checkPingResult() {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000);
 
@@ -609,15 +624,78 @@ async function verifyRealConnectivity() {
       signal: controller.signal,
     });
 
-    if (!response.ok) return false;
+    if (!response.ok) return 'unexpected';
 
     const body = await response.json().catch(() => null);
-    return body?.ok === true;
+    return body?.ok === true ? 'online' : 'unexpected';
   } catch {
+    return 'offline';
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Consecutive 'unexpected' results (e.g. repeated 429s that this app's
+// own rate-limit logic cannot be the source of) are capped — after this
+// many in a row, stop trusting the ping route's status/body alone and
+// fall back to the one signal an intermediary proxy can't fake: whether
+// a real fetch to the ping URL fails outright (network-level) or not,
+// judged purely by promise rejection, ignoring status/body entirely.
+const MAX_CONSECUTIVE_UNEXPECTED_PINGS = 2;
+let consecutiveUnexpectedPings = 0;
+
+async function checkRawNetworkReachability() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    await fetch(`${API_BASE}/api/ping`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    // Reaching here means SOME response came back, of any shape — the
+    // network path itself is working, even if the response content is
+    // one we don't recognize (proxy, captive portal, unrelated 429).
+    return true;
+  } catch {
+    // fetch() only rejects on a genuine network-level failure (DNS
+    // failure, connection refused, timeout via our own AbortController)
+    // — never on a non-2xx HTTP status, which always resolves normally.
     return false;
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+async function verifyRealConnectivity() {
+  const result = await checkPingResult();
+
+  if (result === 'online') {
+    consecutiveUnexpectedPings = 0;
+    return true;
+  }
+
+  if (result === 'offline') {
+    consecutiveUnexpectedPings = 0;
+    return false;
+  }
+
+  // result === 'unexpected'
+  consecutiveUnexpectedPings++;
+  if (consecutiveUnexpectedPings < MAX_CONSECUTIVE_UNEXPECTED_PINGS) {
+    // Give the ping route a couple more tries before falling back —
+    // a single stray non-2xx response could just be transient noise.
+    return false;
+  }
+
+  // Hit the cap: stop trusting the ping route's status/body, and fall
+  // back to raw network reachability instead, so a proxy/CDN/edge layer
+  // that keeps returning an unrelated 429 (which this app cannot be the
+  // source of, per server.js's explicit exemption) can no longer keep
+  // the offline banner stuck forever.
+  consecutiveUnexpectedPings = 0;
+  return checkRawNetworkReachability();
 }
 
 // Reference-counted body scroll lock — used by any full-viewport overlay
