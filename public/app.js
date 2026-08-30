@@ -573,6 +573,53 @@ function hide(el) {
   if (el) el.classList.add('hidden');
 }
 
+// Generic debounce — collapses a rapid burst of calls into one call,
+// fired `delayMs` after the last call in the burst. Used below for the
+// browser's online/offline events, which can fire repeatedly in quick
+// succession on a flaky connection.
+function debounce(fn, delayMs) {
+  let timeoutId = null;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delayMs);
+  };
+}
+
+// navigator.onLine and the online/offline events are heuristics about the
+// network INTERFACE, not the real internet connection, and are documented
+// as unreliable in both directions: they can fire a false "offline" (e.g.
+// toggling a VPN), and — the failure mode this app was hit by — the
+// matching "online" event is not guaranteed to fire at all when a real
+// connection (e.g. mobile data) comes back, which can leave the offline
+// banner stuck forever with no user action able to clear it except a full
+// page reload. This function verifies REAL connectivity by hitting our
+// own /api/ping route (bypasses rate limiting, does no real backend work
+// — see server.js) with a 5-second timeout, and checks the exact expected
+// response body — not just an HTTP 2xx status — so a captive portal or
+// intercepting proxy returning its own "successful-looking" page is still
+// correctly treated as NOT a real connection.
+async function verifyRealConnectivity() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const response = await fetch(`${API_BASE}/api/ping`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+
+    if (!response.ok) return false;
+
+    const body = await response.json().catch(() => null);
+    return body?.ok === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Reference-counted body scroll lock — used by any full-viewport overlay
 // (remove-confirm dialog, token sort dropdown, etc.) so the page behind
 // them cannot scroll while they're open. Reference-counted so scrolling
@@ -1793,8 +1840,11 @@ async function handleSearch() {
   }
 
   if (!navigator.onLine) {
-    showError('offline');
-    return;
+    const actuallyOnline = await verifyRealConnectivity();
+    if (!actuallyOnline) {
+      showError('offline');
+      return;
+    }
   }
 
   const rawAddress = walletInput.value.trim();
@@ -3870,16 +3920,54 @@ accordionBtns.forEach(btn => {
 // ── 30. OFFLINE DETECTION ──
 // ════════════════════════════════════════
 
-window.addEventListener('offline', () => {
-  showError('offline');
-});
+// Once the offline banner is showing, don't rely solely on the browser's
+// "online" event to know when to clear it — that event is not guaranteed
+// to fire (confirmed real-world failure: toggling mobile data off then
+// back on can leave navigator.onLine's "online" event never firing, so
+// the banner would otherwise stay stuck until a full page reload). While
+// the banner is visible, poll our own /api/ping route on a short interval
+// as a backstop, in addition to reacting to the online/offline events
+// when they do fire.
+let connectivityRecoveryPoll = null;
 
-window.addEventListener('online', () => {
-  hide(networkErrorMsg);
-  if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval && !currentAbortController) {
-    fetchLivePrices();
+function stopConnectivityRecoveryPoll() {
+  if (connectivityRecoveryPoll) {
+    clearInterval(connectivityRecoveryPoll);
+    connectivityRecoveryPoll = null;
   }
-});
+}
+
+function startConnectivityRecoveryPoll() {
+  if (connectivityRecoveryPoll) return;
+  connectivityRecoveryPoll = setInterval(async () => {
+    const actuallyOnline = await verifyRealConnectivity();
+    if (actuallyOnline) {
+      stopConnectivityRecoveryPoll();
+      hide(networkErrorMsg);
+      if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval && !currentAbortController) {
+        fetchLivePrices();
+      }
+    }
+  }, 5000);
+}
+
+const handleConnectivityChange = debounce(async () => {
+  const actuallyOnline = await verifyRealConnectivity();
+
+  if (actuallyOnline) {
+    stopConnectivityRecoveryPoll();
+    hide(networkErrorMsg);
+    if (currentWalletAddress && !rateLimitedUntil && liveUpdateInterval && !currentAbortController) {
+      fetchLivePrices();
+    }
+  } else {
+    showError('offline');
+    startConnectivityRecoveryPoll();
+  }
+}, 1000);
+
+window.addEventListener('offline', handleConnectivityChange);
+window.addEventListener('online', handleConnectivityChange);
 
 window.addEventListener('pageshow', () => {
   void restorePersistedRateLimitCountdownOnce();
