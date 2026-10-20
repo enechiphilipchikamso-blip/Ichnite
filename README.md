@@ -256,3 +256,7 @@ Then open [http://localhost:3000](http://localhost:3000). To run without automat
 - **Offline mode is limited.** The app shell can be cached, but wallet, price, transaction, and feedback requests need a network connection.
 - **Provider configuration affects feature availability.** A missing dedicated chart key, Redis configuration, or feedback sender can disable the corresponding feature or its production-safe behavior.
 - **Third-party assets are dependencies.** The page loads Space Grotesk, Font Awesome, and Chart.js from external CDNs, with service-worker caching where it succeeds.
+
+## GitHub integration write test
+
+This temporary note verifies that the connected GitHub integration can update `README.md` and create a commit on `dev-main`. It does not change application code and is not part of the production documentation.
