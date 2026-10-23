@@ -2,231 +2,151 @@
 
 **Inspect public Solana wallets without connecting a wallet.**
 
-Ichnite is a read-only Solana wallet explorer and installable progressive web app (PWA). Paste a public wallet address to view SOL balance and market data, token holdings, NFTs, wallet age, activity, recent transactions, and estimated net worth in one interface. Each major data section can report its own failure or partial result, so one provider problem does not have to hide every other result.
+Ichnite is a read-only Solana wallet explorer and installable progressive web app (PWA). Enter a public wallet address to inspect SOL balance and market information, token holdings, NFTs, wallet activity, recent transactions, wallet age, and estimated net worth in one interface. Each major data section reports its own loading, failure, or partial-data state so one provider problem does not have to hide every other result.
 
 **[Open the live app](https://ichnite.vercel.app/)** • [Ichnite · Solana Wallet Checker](https://ichnite.vercel.app/)
 
 ## Try it in 60 seconds
 
-**Open [Ichnite](https://ichnite.vercel.app/), paste a public Solana wallet address, and select `Trace`.** You do not need to install anything, create an account, connect a wallet, or provide a private key or seed phrase.
+**Open [the live app](https://ichnite.vercel.app/), paste a public Solana wallet address, and select Trace.** No account, wallet connection, private key, or seed phrase is required.
 
 ## Product preview
 
 ![Ichnite product preview showing the brand and a mobile wallet overview](public/images/ichnite-product-preview.png)
 
-*This supplied artwork is a visual preview. The wallet figures shown in it are not evidence of a live wallet query or current market prices.*
+The image is a product illustration. Figures shown in the artwork are illustrative, not a live wallet response or current price quote.
 
 ## At a glance
 
 | | Details |
 |---|---|
-| **Category** | Public Solana wallet explorer and PWA |
-| **Status** | Live production app: [ichnite.vercel.app](https://ichnite.vercel.app/) |
-| **Who it serves** | People who want to inspect a public Solana address without connecting a wallet |
-| **How it works** | A browser interface calls the Ichnite API; the server retrieves wallet and market information from external providers. |
-| **Core components** | Node.js, Express, vanilla JavaScript, HTML/CSS, Chart.js, and a service worker. See [package.json](package.json), [public/app.js](public/app.js), and [public/sw.js](public/sw.js). |
-| **Integrations** | Helius, Shyft, Jupiter, Raydium, CoinGecko, CoinMarketCap, Upstash Redis, Brevo, and Resend. See [server.js](server.js). |
-| **For newcomers** | No wallet connection or signing is required. The address must be public. |
-| **Quality evidence** | The supplied `npm test` script is a placeholder; no automated test suite or CI configuration was supplied. |
-| **Try it** | [Open the live app](https://ichnite.vercel.app/) |
+| **Category** | Read-only Solana wallet explorer and PWA |
+| **Status** | Live production web app at [ichnite.vercel.app](https://ichnite.vercel.app/) |
+| **Who it serves** | People inspecting a public Solana wallet address |
+| **How it works** | The browser calls Ichnite's API; the server retrieves data from configured blockchain and market providers. |
+| **Core components** | Node.js 24.x, Express, vanilla JavaScript, HTML/CSS, Chart.js, and a service worker |
+| **Integrations** | Helius, Shyft, Jupiter, Raydium, CoinGecko, CoinMarketCap, Upstash Redis, Brevo, and Resend |
+| **Quality** | Repeatable tests are provided through Node.js's built-in test runner. No CI workflow is present in this repository. |
+| **Try it** | [Open Ichnite](https://ichnite.vercel.app/) |
 
 ## What you can do
 
 | Area | What it does |
 |---|---|
-| Wallet search | Validates a public Solana address and starts a trace. The app keeps a small recent-search list in your browser. |
-| Wallet overview | Shows SOL balance, SOL price and 24-hour change when available, wallet age, and estimated total net worth. |
-| Token holdings | Lists token balances and estimated values, with token search, value sorting, and a distribution chart. |
-| NFTs | Displays NFTs owned by the address when the provider returns the data. Live NFT pricing is not included. |
-| Wallet activity | Shows activity charts with Days, Month, and Year views. Historical retrieval is deliberately bounded, and partial results may be returned. |
-| Recent transactions | Lists recent transactions and provides a link to view the wallet on Solscan. |
-| Feedback | Accepts anonymous feedback without name or email fields and sends it through the configured email-provider path. |
-| PWA and offline shell | Supports installation where the browser allows it and an offline navigation page. Live wallet lookups still require internet access. |
-
-### API endpoints
-
-The browser uses the same-origin `/api/*` routes. These endpoints are implemented in [server.js](server.js).
-
-| Method and route | Purpose |
-|---|---|
-| `GET /api/ping` | Lightweight server reachability check. |
-| `GET /api/rate-limit-status?cost=...` | Reads the caller's rate-limit and lockout state and supports pre-flight checks. |
-| `GET /api/sol-price` | Retrieves SOL price and 24-hour change. |
-| `GET /api/sol-balance?address=...` | Retrieves the wallet's SOL balance. |
-| `POST /api/token-prices-live` | Retrieves current prices for supplied token mints. |
-| `GET /api/token-metadata?mints=...` | Resolves token metadata for comma-separated mint addresses. |
-| `GET /api/tokens?address=...` | Retrieves token holdings. |
-| `GET /api/nfts?address=...` | Retrieves NFT holdings. |
-| `GET /api/transactions/chart?address=...&years=...` | Retrieves bounded wallet activity history. |
-| `GET /api/transactions/recent?address=...` | Retrieves recent transactions. |
-| `GET /api/wallet-age?address=...` | Looks up the earliest available transaction timestamp. |
-| `GET /api/nft-image-fallback` | Returns the NFT image fallback asset. |
-| `GET /api/token-logo-fallback` | Returns the token logo fallback asset. |
-| `POST /api/feedback` | Validates feedback and attempts email delivery. |
+| Wallet search | Validates a public Solana address and starts a trace. Recent search history is kept in the browser. |
+| Wallet overview | Shows SOL balance, SOL market data when available, wallet age, and estimated total net worth. |
+| Token holdings | Lists token balances and estimated values, with search, value sorting, and a distribution chart. |
+| NFTs | Displays NFT holdings returned by the configured provider. Live NFT pricing is not included. |
+| Wallet activity | Shows Days, Month, and Year chart views. Historical retrieval is bounded and can report partial results. |
+| Recent transactions | Displays recent transactions and links to Solscan. |
+| Feedback | Accepts anonymous feedback and sends accepted messages through the configured email-provider path. |
+| PWA and offline shell | Supports installation where the browser allows it and shows an offline navigation page. Live wallet lookups still require a network connection. |
 
 ## How it works
 
-1. **Enter a public address.** The browser validates the address before starting the lookup.
-2. **Check the request budget.** The frontend asks the backend for the current rate-limit state before it starts a trace.
-3. **Fetch independent sections.** The frontend schedules requests with bounded concurrency. The backend calls providers and applies supported fallback paths.
-4. **Render what is available.** Balance, tokens, NFTs, activity, recent transactions, wallet age, and total value have independent loading and failure states.
-5. **Keep live data online.** The service worker can cache the app shell and provide an offline navigation page, but API requests are not treated as offline data.
-
-### Runtime limits
-
-The values below are defined in [public/app.js](public/app.js), [server.js](server.js), and [.env.example](.env.example). Environment values can override the documented defaults where the server supports them.
-
-```text
-Trace scheduling: maximum 3 active jobs; trace base request cost 7; pre-flight reservation 8.
-API request budget: 100 counted API requests per IP per 15-minute window; /api/ping and /api/rate-limit-status are exempt; a separate custom lockout lasts 15 minutes.
-Wallet activity: maximum 250 pages; 60,000 ms operation budget; 150 ms page delay; up to 3 retries; 1,000 ms retry base; 90,000 ms cache TTL; 200 cached entries maximum.
-NFT ownership: maximum 50 pages; 1,000 assets per page; 150 ms page delay; up to 3 retries; 1,000 ms retry base.
-Recent search history: maximum 3 addresses in browser localStorage.
-Feedback timing check: 2,500 ms minimum elapsed time from the page-load/focus timestamps.
-```
-
-## Words you'll see
-
-- **Public wallet address:** An address that can be queried on the Solana blockchain. It is not a private key.
-- **SOL:** Solana's native asset.
-- **Token mint:** The on-chain identifier for a token. Ichnite uses mint addresses, not token symbols, to identify token data.
-- **NFT:** A non-fungible token. The NFT section shows ownership data returned by the configured provider; it does not provide live NFT prices.
-- **PWA:** A website that a compatible browser can install and launch in an app-like window.
-- **Provider:** An external service that supplies blockchain, token, price, or email functionality to Ichnite.
-
-## Architecture
+1. **Enter a public address.** The browser checks the address format before starting a trace.
+2. **Check the request budget.** The API decides whether the request can proceed and remains authoritative for lockout state.
+3. **Fetch independent sections.** The frontend schedules requests with bounded concurrency. The backend queries configured providers and uses supported fallback paths.
+4. **Render available results.** Wallet cards keep their own loading, failure, and partial-data states.
+5. **Keep live data online.** The service worker caches static application files, not live wallet or market responses.
 
 ```mermaid
 flowchart LR
-    U["Visitor"] --> B["Browser UI: HTML, CSS, vanilla JavaScript"]
-    B -->|"Same-origin /api/* requests"| A["Node.js and Express API"]
+    U["Visitor"] --> B["Browser interface"]
+    B -->|"same-origin /api requests"| A["Node.js and Express"]
     B <--> SW["Service worker and static cache"]
-    A --> H["Helius and Shyft"]
-    A --> T["Jupiter and Raydium"]
-    A --> P["CoinGecko and CoinMarketCap"]
-    A <--> R["Upstash Redis: shared request state and feedback counter"]
-    A --> E["Brevo and Resend"]
+    A --> H["Helius / Shyft"]
+    A --> T["Jupiter / Raydium"]
+    A --> P["CoinGecko / CoinMarketCap"]
+    A <--> R["Upstash Redis"]
+    A --> E["Brevo / Resend"]
 ```
 
-The backend is the boundary between the browser and provider credentials. The main lookup flow is:
+## Runtime and request limits
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Browser
-    participant API as Ichnite API
-    participant Redis as Upstash Redis
-    participant Providers as Data providers
-    User->>Browser: Submit public wallet address
-    Browser->>Browser: Validate address
-    Browser->>API: GET /api/rate-limit-status?cost=8
-    API->>Redis: Read shared request state when configured
-    Redis-->>API: Budget and lockout state
-    API-->>Browser: Pre-flight result
-    alt Request allowed
-        Browser->>API: Bounded wallet-data requests
-        API->>Providers: Query balances, holdings, activity, and prices
-        Providers-->>API: Data or provider errors
-        API-->>Browser: Section responses
-        Browser-->>User: Render independent cards and partial states
-    else Request blocked
-        API-->>Browser: Rate-limit state and retry information
-        Browser-->>User: Show wait/countdown state
-    end
-```
+These values are defined in [public/app.js](public/app.js), [server.js](server.js), and [.env.example](.env.example).
 
-- **Trust boundary.** The browser calls Ichnite routes, not the blockchain and market providers directly. Provider keys are read by the backend from environment variables.
-- **State.** There is no wallet-record database in the supplied application. Search history is in browser `localStorage`; the chart cache is in server memory. Upstash Redis supports the distributed request counter, lockout persistence, and feedback sequence when configured.
-- **Fallbacks.** Helius is the primary structural/transaction provider, with Shyft fallback only for supported data. Jupiter is primary for token prices with Raydium fallback; CoinGecko is primary for SOL price with CoinMarketCap fallback. Feedback delivery tries Brevo and then Resend for qualifying failures.
-- **External dependencies.** Availability, provider quotas, upstream response formats, browser support, and email sender verification can affect features. A section can be unavailable even when the frontend loads.
-
-## Built with
-
-| Technology | Role in this project |
+| Control | Current setting |
 |---|---|
-| Node.js 24.x | Runtime target declared by [`package.json`](package.json). |
-| Express | Serves the API and static application files in [`server.js`](server.js). |
-| Vanilla JavaScript, HTML, and CSS | Handles wallet input, bounded request scheduling, UI state, charts, and responsive layout in [`public/app.js`](public/app.js), [`public/index.html`](public/index.html), and [`public/css/style.css`](public/css/style.css). |
-| Chart.js | Renders token distribution and wallet activity charts; loaded by the browser from a CDN in [`public/index.html`](public/index.html). |
-| Helmet and CORS | Configure security headers and allowed browser origins in [`server.js`](server.js). |
-| express-rate-limit | Enforces the API request budget; the server uses an Upstash-backed store when Redis configuration is available. |
-| Upstash Redis | Stores shared request counters/lockouts and the feedback sequence counter when configured. |
-| Helius and Shyft | Supply Solana wallet, token, NFT, and transaction data within their supported roles. |
-| Jupiter and Raydium | Supply token price data. |
-| CoinGecko and CoinMarketCap | Supply SOL price and 24-hour change, with a fallback path. |
-| Brevo and Resend | Deliver accepted feedback messages through the backend. |
-| Service worker and web app manifest | Cache the static app shell and define installable PWA behavior in [`public/sw.js`](public/sw.js) and [`public/manifest.json`](public/manifest.json). |
+| Node.js line | `24.x` in `package.json`; the latest applicable Node.js 24.x security patch verified on 2026-10-23 is `v24.22.1` ([official release](https://nodejs.org/en/blog/release/v24.22.1)). |
+| Trace request scheduling | Up to 3 active trace jobs |
+| Trace request accounting | Base cost 7; pre-flight reservation 8 |
+| Shared API budget | 100 counted requests per rate-limit identity in 15 minutes |
+| Abuse lockout | Separate 15-minute lockout; not the same as the request-window counter |
+| Wallet activity history | Up to 250 pages within a 60,000 ms operation budget |
+| Chart pagination | 150 ms page delay, up to 3 retries, 1,000 ms retry base delay |
+| Chart result cache | 90,000 ms TTL and up to 200 entries |
+| NFT pagination | Up to 50 pages with 1,000 assets per page; separate from chart pagination |
+| Upstream request bounds | 10-second timeout, maximum 5 redirects, and maximum 10 MiB JSON response body per provider request |
+| Feedback submission timing | 2,500 ms minimum timing check |
 
-## Production deployment
+Vercel selects Node.js by major line and may roll out patch releases automatically. The `24.x` engine declaration does not prove which exact patch a particular deployment is running. See [Vercel's supported Node.js versions](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions) and check current deployment settings/logs when verifying production runtime evidence.
 
-| App | URL | Environment | Verification |
-|---|---|---|---|
-| Ichnite | [https://ichnite.vercel.app/](https://ichnite.vercel.app/) | Vercel production | The production web app works |
+## API endpoints
 
-| Component | Source | Role |
-|---|---|---|
-| Browser app | [`public/index.html`](public/index.html), [`public/app.js`](public/app.js), [`public/css/style.css`](public/css/style.css) | Search UI, results, cards, chart controls, and feedback widget. |
-| API server | [`server.js`](server.js) | Provider access, response shaping, rate limiting, feedback validation, and static serving. |
-| PWA shell | [`public/manifest.json`](public/manifest.json), [`public/sw.js`](public/sw.js), [`public/offline.html`](public/offline.html) | Install metadata, static caching, and offline navigation fallback. |
-| Runtime configuration template | [`.env.example`](.env.example) | Lists environment-variable names and documented defaults without credential values. |
+Routes are implemented in [server.js](server.js). They are used by the frontend and are not a public provider-agnostic API contract.
 
-## Security and privacy
-
-- **Read-only access.** Ichnite requests public chain data and does not ask for wallet connection, transaction signing, private keys, or seed phrases.
-- **Server-side credentials.** Provider and email API keys are read by [`server.js`](server.js) from environment variables; they should not be placed in browser code or committed to source control.
-- **Wallet addresses still leave the browser.** The address is sent to the Ichnite API so the backend can query external providers. Do not treat a public address as secret, but remember that it can reveal public on-chain activity.
-- **Local search history.** The browser stores up to 3 recent addresses in `localStorage`, under the `IchniteHistory` key. Remove entries from the history UI or clear the site's browser storage if needed. This behavior is implemented in [`public/app.js`](public/app.js).
-- **Rate limiting.** The server uses the request IP as the rate-limit key. For a deployment spanning multiple serverless instances, configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` so the request counter is shared. Without Redis configuration, `express-rate-limit` uses its default in-process store, which is not shared across instances.
-- **Feedback.** The form has no name or email fields. Server-side validation includes a hidden honeypot, blocked-content checks, a timing check, and provider fallback. Accepted messages are sent to the configured recipient. Feedback delivery requires Redis and valid email-provider/sender configuration.
-- **Cross-origin requests.** Production browser origins are controlled with `ALLOWED_ORIGINS`; local development origins are allowed by the development configuration.
-
-## Repository structure
-
-
-```text
-.
-├── .env.example
-├── .gitignore
-├── package.json
-├── README.md
-├── server.js
-├── docs/
-│   └── images/
-│       └── ichnite-product-preview.png
-└── public/
-    ├── app.js
-    ├── css/
-    │   └── style.css
-    ├── images/
-    │   └── logo.svg
-    ├── index.html
-    ├── manifest.json
-    ├── offline.html
-    └── sw.js
-```
+| Method and route | Purpose |
+|---|---|
+| `GET /api/ping` | Lightweight server reachability check; exempt from the counted API budget and lockout middleware |
+| `GET /api/rate-limit-status?cost=...` | Reads the request budget and lockout state and supports pre-flight checks |
+| `GET /api/sol-price` | Retrieves SOL price and 24-hour change |
+| `GET /api/sol-balance?address=...` | Retrieves a wallet's SOL balance |
+| `POST /api/token-prices-live` | Retrieves current prices for token mints |
+| `GET /api/token-metadata?mints=...` | Resolves metadata for comma-separated mint addresses |
+| `GET /api/tokens?address=...` | Retrieves token holdings |
+| `GET /api/nfts?address=...` | Retrieves NFT holdings |
+| `GET /api/transactions/chart?address=...&years=...` | Retrieves bounded wallet activity history |
+| `GET /api/transactions/recent?address=...` | Retrieves recent transactions |
+| `GET /api/wallet-age?address=...` | Looks up the earliest available transaction timestamp |
+| `GET /api/nft-image-fallback` | Returns an NFT image fallback |
+| `GET /api/token-logo-fallback` | Returns a token logo fallback |
+| `POST /api/feedback` | Validates feedback and attempts email delivery |
 
 ## Run locally
 
 ### Prerequisites
 
-- Node.js `24.x`, as declared in [`package.json`](package.json).
-- npm.
-- Provider credentials for the wallet and pricing features you want to use.
+- Node.js 24.x and npm.
+- Provider credentials for the data you want to retrieve. Without the relevant credentials, some data sections may be unavailable or have reduced fallback coverage.
+- Upstash Redis and email-provider credentials for the shared production request store and feedback delivery path.
+
+For local patch alignment, Node.js `v24.22.1` was the latest applicable security patch published by the Node.js project on 2026-10-21. Install it using the method appropriate for your platform and confirm with `node --version`.
 
 ### Install and configure
 
 From the repository root:
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
 ```
 
-Edit `.env` locally. Do not commit it. `.gitignore` excludes `.env` files while allowing `.env.example` to be committed.
+Edit the local `.env` file and add values for the services you intend to use. Never commit the file. [.gitignore](.gitignore) excludes local environment files while allowing `.env.example` to remain in version control.
 
-For a meaningful wallet trace, configure `HELIUS_API_KEY`. The activity chart uses `HELIUS_BARCHART_TRANSACTION_API_KEY` in production; development code can explicitly fall back to `HELIUS_API_KEY` when the dedicated chart key is absent. `SHYFT_API_KEY`, `JUPITER_API_KEY`, `COINGECKO_API_KEY`, and `CMC_API_KEY` support the provider roles described above.
+### Environment variables
 
-To use distributed rate-limit state and feedback, configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Feedback delivery also needs at least one of `BREVO_API_KEY` or `RESEND_API_KEY`, a matching provider-specific sender (`BREVO_SENDER_EMAIL` or `RESEND_SENDER_EMAIL`), and `FEEDBACK_RECIPIENT_EMAIL`. Review all available names and defaults in [`.env.example`](.env.example).
+| Variable | Purpose |
+|---|---|
+| `PORT` | Local server port; defaults to 3000 |
+| `NODE_ENV` | Set to `development` for local diagnostics; production should use `production` |
+| `HELIUS_API_KEY` | Primary Solana data provider |
+| `HELIUS_BARCHART_TRANSACTION_API_KEY` | Dedicated wallet-activity chart capacity |
+| `SHYFT_API_KEY` | Partial fallback for supported wallet/token/NFT data |
+| `JUPITER_API_KEY` | Token price provider configuration |
+| `COINGECKO_API_KEY`, `CMC_API_KEY` | SOL market-data provider configuration and fallback |
+| `TRUST_PROXY` | Express proxy trust configuration; set to match the actual deployment topology |
+| `ALLOWED_ORIGINS` | Comma-separated browser origins accepted in deployment |
+| `DEBUG_TRUST_PROXY` | Development-only diagnostic switch; diagnostics are ignored outside development |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Shared request-limit state and Redis-backed support state |
+| `REDIS_KEY_PREFIX`, `FEEDBACK_REDIS_KEY_PREFIX` | Separate Redis key namespaces |
+| `HELIUS_CHART_PAGE_DELAY_MS`, `HELIUS_RETRY_BASE_DELAY_MS`, `HELIUS_MAX_PAGE_RETRIES`, `HELIUS_MAX_TX_PAGES`, `HELIUS_TX_TIME_BUDGET_MS`, `HELIUS_CHART_CACHE_TTL_MS`, `HELIUS_CHART_CACHE_MAX_ENTRIES` | Wallet activity pagination and chart cache controls |
+| `HELIUS_MAX_NFT_PAGES`, `HELIUS_NFT_PAGE_DELAY_MS`, `HELIUS_NFT_MAX_PAGE_RETRIES`, `HELIUS_NFT_RETRY_BASE_DELAY_MS` | Independent NFT ownership pagination controls |
+| `BREVO_API_KEY`, `RESEND_API_KEY` | Primary and fallback feedback email provider credentials |
+| `FEEDBACK_RECIPIENT_EMAIL`, `BREVO_SENDER_EMAIL`, `RESEND_SENDER_EMAIL`, `FEEDBACK_SENDER_NAME` | Feedback email routing and sender identity |
+| `CODESPACE_NAME` | Development-only Codespaces CORS support |
+
+The complete list and default values are in [.env.example](.env.example). All credentials belong in local or deployment environment settings, never in source files or browser code.
 
 ### Start the server
 
@@ -234,15 +154,101 @@ To use distributed rate-limit state and feedback, configure `UPSTASH_REDIS_REST_
 npm run dev
 ```
 
-Then open [http://localhost:3000](http://localhost:3000). To run without automatic restarts, use `npm start`. In development, the app allows the local origins on port `3000`; production deployments must configure `ALLOWED_ORIGINS` for their frontend origin.
+Open [http://localhost:3000](http://localhost:3000). For a server without automatic restart, use `npm start`.
 
+## Tests and validation
 
-## Limitations
+Run the repeatable tests with:
 
-- **Wallet data depends on providers.** Provider outages, rate limits, and incomplete upstream responses can leave a card unavailable or return partial results.
-- **Net worth is an estimate.** It reflects the SOL and token price data available to the app, not a guaranteed valuation or a financial recommendation.
-- **Activity history is bounded.** Chart retrieval stops at the configured page or time budget, so older history may be partial.
-- **NFT pricing is not included.** The NFT section reports holdings rather than live floor prices or valuations.
-- **Offline mode is limited.** The app shell can be cached, but wallet, price, transaction, and feedback requests need a network connection.
-- **Provider configuration affects feature availability.** A missing dedicated chart key, Redis configuration, or feedback sender can disable the corresponding feature or its production-safe behavior.
-- **Third-party assets are dependencies.** The page loads Space Grotesk, Font Awesome, and Chart.js from external CDNs, with service-worker caching where it succeeds.
+```bash
+npm test
+```
+
+The test suite uses Node.js's built-in test runner in [test/security.test.js](test/security.test.js). It covers outbound-fetch timeout/response-size/redirect caps, HTTPS enforcement, provider error redaction, HTTP status and invalid JSON handling, production CORS and proxy-log privacy, malformed and oversized JSON bodies, rejection of compressed JSON bodies, feedback validation, the request budget, and health/status exemptions. A separate UI regression check protects the mobile clear-button and keyboard-focus styles and confirms cached stylesheet changes advance the service-worker cache version. These tests are not a substitute for provider-backed checks against configured Helius, pricing, Redis, or email accounts.
+
+This repository has no configured CI workflow. Test results must come from an actual local `npm test` run; the existence of the command alone is not evidence that a run passed.
+
+## Security and privacy
+
+- **Read-only access.** Ichnite queries public-chain information. It does not connect to wallets, sign transactions, or request private keys or seed phrases.
+- **Server-side credentials.** Provider and email credentials are read by [server.js](server.js); the browser calls Ichnite's `/api/*` routes rather than providers directly.
+- **Bounded outbound requests.** Data and feedback provider requests use a shared timeout, response-size limit and redirect cap. Transport and JSON errors are sanitized so raw request URLs, provider payloads, or API keys embedded in provider URLs are not copied into the usual error logs.
+- **Compressed JSON bodies.** API JSON parsing rejects compressed request bodies before decompression while preserving the 100 KiB request limit. Ichnite's browser sends uncompressed JSON; this mitigation addresses [the body-parser compressed-body denial-of-service advisory](https://github.com/expressjs/body-parser/security/advisories/GHSA-27r3-jxmh-p828) without removing an existing user flow.
+- **HTTPS-only provider transport.** The common outbound-fetch helper rejects non-HTTPS URLs. Provider destinations remain defined by backend code, not by a user-submitted URL.
+- **Production logging.** Detailed CORS-origin and proxy/IP diagnostics are limited to development. Production error logs use safe categories, and wallet addresses are omitted from chart truncation logs.
+- **Request limiting.** The server has a 100-request/15-minute budget and a separate 15-minute lockout. Configure both `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` for shared request-rate state across serverless instances.
+- **Local history.** Recent addresses are stored in browser `localStorage`; clear them in the app or clear this site's browser storage to remove them.
+- **Feedback.** Feedback is anonymous in the interface, but its message is sent to the configured product inbox. Do not include information you do not want to send.
+- **PWA behavior.** Static files can be cached for app startup and offline navigation. Live wallet, price, transaction, and feedback requests still require a network connection.
+
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant Visitor
+    participant Browser
+    participant API as "Ichnite API"
+    participant Redis as "Upstash Redis"
+    participant Providers as "Data providers"
+    Visitor->>Browser: Submit public wallet address
+    Browser->>Browser: Validate address
+    Browser->>API: Check pre-flight request cost
+    API->>Redis: Read shared rate state when configured
+    Redis-->>API: Request budget and lockout state
+    API-->>Browser: Allowed or wait state
+    Browser->>API: Fetch wallet-data sections
+    API->>Providers: Request blockchain and price data
+    Providers-->>API: Data or provider errors
+    API-->>Browser: Independent section responses
+    Browser-->>Visitor: Render available and partial results
+```
+
+- **State location.** There is no persistent wallet database. Search history and countdown state are browser-local, chart/cache data is in server memory, and Upstash stores shared request and feedback support state when configured.
+- **Provider fallbacks.** Helius is primary for Solana data; Shyft covers only supported fallback areas. Jupiter/Raydium handle token pricing, CoinGecko/CoinMarketCap handle SOL pricing, and Brevo/Resend handle feedback delivery.
+- **Cache boundaries.** Token, logo and NFT metadata cache entries are in memory. Persistent Redis caching for that metadata and live NFT pricing are not included.
+- **Independent cards.** A failure in one upstream data section does not intentionally block unrelated wallet sections.
+
+## Repository structure
+
+```text
+.
+├── .env.example
+├── .gitignore
+├── README.md
+├── package.json
+├── package-lock.json
+├── server.js
+├── lib/
+│   └── upstream-fetch.js
+├── test/
+│   └── security.test.js
+└── public/
+    ├── app.js
+    ├── css/
+    │   └── style.css
+    ├── images/
+    │   ├── ichnite-product-preview.png
+    │   ├── logo.png
+    │   ├── logo.svg
+    │   └── sol-logo.png
+    ├── index.html
+    ├── manifest.json
+    ├── offline.html
+    └── sw.js
+```
+
+## Production and release notes
+
+Ichnite is live at [ichnite.vercel.app](https://ichnite.vercel.app/). This batch changes only the `dev-main` branch; it does not merge into `main` or deploy the production app.
+
+Before releasing these changes, merge through the project's normal review process and redeploy through Vercel. Then verify the deployment's Node.js runtime/version from current Vercel settings or build/runtime logs, open the app, trace a valid public wallet, verify invalid-address messaging and partial cards, confirm rate-limit status/lockout behavior, submit feedback only in a controlled test, and test PWA update/offline navigation in a browser with an existing service-worker cache.
+
+## Known limitations and missing repository evidence
+
+- Wallet-data and market-data results depend on external providers and their configured credentials, quotas, and availability.
+- Activity history is bounded by its page and time limits; older history may be partial.
+- NFT holdings are shown without live NFT pricing.
+- Offline support covers static application behavior, not live wallet data.
+- There is no CI workflow in the repository.
+- `package.json` declares `MIT`, but there is no root `LICENSE` file in the current repository tree.
+- The exact Node.js patch used by the live Vercel deployment cannot be established from the repository source alone; verify it in deployment evidence.
