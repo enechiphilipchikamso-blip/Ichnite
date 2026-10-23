@@ -16,6 +16,10 @@ import { randomUUID } from 'node:crypto';
 import { Redis } from '@upstash/redis';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createSafeFetch, UpstreamError } from './lib/upstream-fetch.js';
+
+// Provider URLs and errors pass through one bounded, secret-safe transport layer.
+const safeFetch = createSafeFetch(fetch);
 
 // ── Resolve __dirname (not available by default in ES modules) ──
 const __filename = fileURLToPath(import.meta.url);
@@ -202,16 +206,20 @@ const corsOptions = {
   origin(origin, callback) {
     // Allow requests with no Origin (Postman, curl, server-to-server)
     if (!origin) {
-      console.log('✅ Allowing request with no Origin header');
+      if (NODE_ENV === 'development') {
+        console.log('Allowing request with no Origin header');
+      }
       return callback(null, true);
     }
 
-    console.log('Origin:', origin);
+    if (NODE_ENV === 'development') console.log('CORS origin received:', origin);
 
     // Allow explicitly configured frontend origins.
     // This is the primary production/deployment-independent mechanism.
     if (allowedOrigins.has(origin)) {
-      console.log(`✅ Allowed configured origin: ${origin}`);
+      if (NODE_ENV === 'development') {
+        console.log('Allowed configured origin:', origin);
+      }
       return callback(null, true);
     }
 
@@ -237,7 +245,12 @@ const corsOptions = {
       }
     }
 
-    console.error(`❌ Blocked CORS request from origin: ${origin}`);
+    if (NODE_ENV === 'development') {
+      console.warn('Blocked CORS request from origin:', origin);
+    } else {
+      // Do not echo an untrusted Origin header into production logs.
+      console.warn('Blocked CORS request from an unapproved origin.');
+    }
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST'],
@@ -441,7 +454,7 @@ function getRateLimitKey(req) {
   const key = req.ip;
   const activeLockout = getActiveRateLimitLockout(key);
 
-  if (process.env.DEBUG_TRUST_PROXY === 'true') {
+  if (NODE_ENV === 'development' && process.env.DEBUG_TRUST_PROXY === 'true') {
     console.log('🔎 Rate-limit key debug:', {
       key,
       reqIp: req.ip,
@@ -752,7 +765,7 @@ app.use('/api', async (req, res, next) => {
 app.use('/api', apiLimiter);
 
 // 4. JSON body parser
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 
 // ── API Keys — loaded from .env — never sent to browser ──
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
@@ -771,25 +784,8 @@ function isValidSolanaAddress(address) {
   return base58Regex.test(address.trim());
 }
 
-// ── Helper — handle fetch errors gracefully ──
-// Carries the real upstream HTTP status so callers can tell "the provider is
-// down/overloaded" apart from "our own code threw" — never inferred from a
-// message string.
-class UpstreamError extends Error {
-  constructor(message, status) {
-    super(message);
-    this.name = 'UpstreamError';
-    this.status = status;
-  }
-}
-
-async function safeFetch(url, options = {}) {
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    throw new UpstreamError(`API error: ${response.status} ${response.statusText}`, response.status);
-  }
-  return response.json();
-}
+// Shared transport implementation is in lib/upstream-fetch.js so its limits
+// and error-redaction behavior can be tested independently of provider APIs.
 
 // Genuine "upstream/network delay" signals only — a 502/503/504 from the
 // provider itself, or a transport-level failure (timeout, reset, refused,
@@ -933,6 +929,7 @@ async function sendFeedbackWithBrevo(feedback, subject) {
   const response = await fetch(
     'https://api.brevo.com/v3/smtp/email',
     {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -977,6 +974,7 @@ async function sendFeedbackWithResend(feedback, subject) {
   const response = await fetch(
     'https://api.resend.com/emails',
     {
+      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -2189,7 +2187,10 @@ app.get('/api/transactions/chart', async (req, res) => {
 
     const { transactions, partial, pagesFetched } = await fetchHeliusChartTransactions(normalizedAddress, cutoffTimestamp);
     if (partial) {
-      console.warn(`Wallet activity chart truncated for ${normalizedAddress} — ${pagesFetched} page(s) fetched, ${transactions.length} transaction(s) returned.`);
+      console.warn('Wallet activity chart truncated.', {
+        pagesFetched,
+        returnedTransactions: transactions.length,
+      });
     }
     if (!partial) {
       setCachedChartResult(cacheKey, { transactions, partial, pagesFetched });
@@ -2451,10 +2452,33 @@ app.get('*', (req, res) => {
 // ── GLOBAL ERROR HANDLER ──
 // ════════════════════════════════════════
 app.use((err, req, res, next) => {
-  console.error('Server error:', err.message);
+  const errorType =
+    err.type === 'entity.too.large'
+      ? 'request-body-too-large'
+      : err.type === 'entity.parse.failed'
+        ? 'invalid-json'
+        : err.message === 'Not allowed by CORS'
+          ? 'cors-rejected'
+          : 'internal-error';
+
+  if (NODE_ENV === 'development') {
+    console.error('Server error:', err.message);
+  } else {
+    // Keep malformed payloads, attacker-controlled origins and provider details
+    // out of routine production logs; the response remains intentionally generic.
+    console.error('Server request failed:', errorType);
+  }
+
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({ error: 'Access not allowed.' });
   }
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body is too large.' });
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid JSON request body.' });
+  }
+
   res.status(500).json({
     error: 'Something went wrong on our end. Please try again shortly.',
   });
