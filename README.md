@@ -164,7 +164,7 @@ Run the repeatable tests with:
 npm test
 ```
 
-The test suite uses Node.js's built-in test runner in [test/security.test.js](test/security.test.js). It covers outbound-fetch timeout/response-size/redirect bounds, provider error redaction, HTTPS enforcement, invalid JSON handling, production CORS and proxy-log privacy, malformed and oversized JSON bodies, feedback validation behavior, the request budget, and the health/status exemptions. These tests are not a substitute for provider-backed checks against configured Helius, pricing, Redis, or email accounts.
+The test suite uses Node.js's built-in test runner in [test/security.test.js](test/security.test.js). It covers outbound-fetch timeout/response-size/redirect caps, HTTPS enforcement, provider error redaction, HTTP status and invalid JSON handling, production CORS and proxy-log privacy, malformed and oversized JSON bodies, rejection of compressed JSON bodies, feedback validation, the request budget, and health/status exemptions. A separate UI regression check protects the mobile clear-button and keyboard-focus styles and confirms cached stylesheet changes advance the service-worker cache version. These tests are not a substitute for provider-backed checks against configured Helius, pricing, Redis, or email accounts.
 
 This repository has no configured CI workflow. Test results must come from an actual local `npm test` run; the existence of the command alone is not evidence that a run passed.
 
@@ -172,7 +172,8 @@ This repository has no configured CI workflow. Test results must come from an ac
 
 - **Read-only access.** Ichnite queries public-chain information. It does not connect to wallets, sign transactions, or request private keys or seed phrases.
 - **Server-side credentials.** Provider and email credentials are read by [server.js](server.js); the browser calls Ichnite's `/api/*` routes rather than providers directly.
-- **Bounded outbound requests.** Provider requests use a shared timeout, response-size limit and redirect cap. Transport and JSON errors are sanitized so raw request URLs, provider payloads, or API keys embedded in provider URLs are not copied into the usual error logs.
+- **Bounded outbound requests.** Data and feedback provider requests use a shared timeout, response-size limit and redirect cap. Transport and JSON errors are sanitized so raw request URLs, provider payloads, or API keys embedded in provider URLs are not copied into the usual error logs.
+- **Compressed JSON bodies.** API JSON parsing rejects compressed request bodies before decompression while preserving the 100 KiB request limit. Ichnite's browser sends uncompressed JSON; this mitigation addresses [the body-parser compressed-body denial-of-service advisory](https://github.com/expressjs/body-parser/security/advisories/GHSA-27r3-jxmh-p828) without removing an existing user flow.
 - **HTTPS-only provider transport.** The common outbound-fetch helper rejects non-HTTPS URLs. Provider destinations remain defined by backend code, not by a user-submitted URL.
 - **Production logging.** Detailed CORS-origin and proxy/IP diagnostics are limited to development. Production error logs use safe categories, and wallet addresses are omitted from chart truncation logs.
 - **Request limiting.** The server has a 100-request/15-minute budget and a separate 15-minute lockout. Configure both `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` for shared request-rate state across serverless instances.

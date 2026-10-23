@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { gzipSync } from 'node:zlib';
 import { once } from 'node:events';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, test } from 'node:test';
 
-import { createSafeFetch, UpstreamError } from '../lib/upstream-fetch.js';
+import { createSafeFetch, createSafeRequest, UpstreamError } from '../lib/upstream-fetch.js';
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -194,6 +195,34 @@ test('safe upstream fetch bounds requests and redacts provider details', async (
   });
 });
 
+test('safe upstream request preserves HTTP responses without weakening transport limits', async () => {
+  let observedUrl;
+  let observedOptions;
+  const response = { ok: false, status: 429 };
+  const safeRequest = createSafeRequest(async (url, options) => {
+    observedUrl = url;
+    observedOptions = options;
+    return response;
+  });
+
+  const received = await safeRequest(
+    'https://mail-provider.example/emails?api-key=secret-marker',
+    {
+      method: 'POST',
+      body: '{}',
+      follow: 100,
+      size: 0,
+    }
+  );
+
+  assert.equal(received, response);
+  assert.equal(observedUrl.protocol, 'https:');
+  assert.equal(observedOptions.follow, 5);
+  assert.equal(observedOptions.size, 10 * 1024 * 1024);
+  assert.ok(observedOptions.signal instanceof AbortSignal);
+  assert.equal(observedOptions.method, 'POST');
+});
+
 test('production HTTP controls reject bad input, protect logs, and preserve rate-limit exemptions', { timeout: 45_000 }, async (t) => {
   const port = await getFreePort();
   const baseUrl = 'http://127.0.0.1:' + port;
@@ -314,6 +343,30 @@ test('production HTTP controls reject bad input, protect logs, and preserve rate
       headers: { 'x-forwarded-for': marker },
     });
     assert.equal(result.response.status, 400);
+  });
+
+  await t.test('rejects compressed JSON before decompression and keeps the process healthy', async () => {
+    const compressedWithTrailingBytes = Buffer.concat([
+      gzipSync(Buffer.from(JSON.stringify({ feedback: 'compressed request test' }))),
+      Buffer.from('attacker-controlled trailing bytes'),
+    ]);
+    const result = await requestJson(baseUrl, '/api/feedback', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip',
+      },
+      body: compressedWithTrailingBytes,
+    });
+
+    assert.equal(result.response.status, 415);
+    assert.deepEqual(result.body, {
+      error: 'Compressed request bodies are not supported.',
+    });
+
+    const health = await requestJson(baseUrl, '/api/ping');
+    assert.equal(health.response.status, 200);
+    assert.deepEqual(health.body, { ok: true });
   });
 
   await t.test('returns safe body-parser errors for malformed and oversized JSON', async () => {

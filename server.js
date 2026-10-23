@@ -16,10 +16,11 @@ import { randomUUID } from 'node:crypto';
 import { Redis } from '@upstash/redis';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createSafeFetch, UpstreamError } from './lib/upstream-fetch.js';
+import { createSafeFetch, createSafeRequest, UpstreamError } from './lib/upstream-fetch.js';
 
 // Provider URLs and errors pass through one bounded, secret-safe transport layer.
 const safeFetch = createSafeFetch(fetch);
+const safeRequest = createSafeRequest(fetch);
 
 // ── Resolve __dirname (not available by default in ES modules) ──
 const __filename = fileURLToPath(import.meta.url);
@@ -765,7 +766,8 @@ app.use('/api', async (req, res, next) => {
 app.use('/api', apiLimiter);
 
 // 4. JSON body parser
-app.use(express.json({ limit: '100kb' }));
+// Browser clients send plain JSON; reject encoded bodies before decompression.
+app.use(express.json({ limit: '100kb', inflate: false }));
 
 // ── API Keys — loaded from .env — never sent to browser ──
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
@@ -926,10 +928,9 @@ async function sendFeedbackWithBrevo(feedback, subject) {
     throw new Error('Brevo feedback configuration is incomplete.');
   }
 
-  const response = await fetch(
+  const response = await safeRequest(
     'https://api.brevo.com/v3/smtp/email',
     {
-      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -971,10 +972,9 @@ async function sendFeedbackWithResend(feedback, subject) {
     throw new Error('Resend feedback configuration is incomplete.');
   }
 
-  const response = await fetch(
+  const response = await safeRequest(
     'https://api.resend.com/emails',
     {
-      signal: AbortSignal.timeout(10_000),
       method: 'POST',
       headers: {
         accept: 'application/json',
@@ -2457,9 +2457,11 @@ app.use((err, req, res, next) => {
       ? 'request-body-too-large'
       : err.type === 'entity.parse.failed'
         ? 'invalid-json'
-        : err.message === 'Not allowed by CORS'
-          ? 'cors-rejected'
-          : 'internal-error';
+        : err.type === 'encoding.unsupported'
+          ? 'unsupported-content-encoding'
+          : err.message === 'Not allowed by CORS'
+            ? 'cors-rejected'
+            : 'internal-error';
 
   if (NODE_ENV === 'development') {
     console.error('Server error:', err.message);
@@ -2477,6 +2479,9 @@ app.use((err, req, res, next) => {
   }
   if (err.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'Invalid JSON request body.' });
+  }
+  if (err.type === 'encoding.unsupported') {
+    return res.status(415).json({ error: 'Compressed request bodies are not supported.' });
   }
 
   res.status(500).json({

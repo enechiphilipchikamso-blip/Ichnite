@@ -2123,10 +2123,6 @@ grid-template-columns: repeat(4, 1fr);
     padding: 0 12px;
   }
   
-    .search-box .clear-btn {
-    display: none !important;
-  }
-
   .search-box {
     position: relative;
     width: 100%;
@@ -2143,8 +2139,10 @@ grid-template-columns: repeat(4, 1fr);
 
   .search-box .clear-btn {
     position: absolute;
-    top: 50%;
-    right: 72px;
+    top: 29px;
+    right: 12px;
+    width: 44px;
+    height: 44px;
     transform: translateY(-50%);
   }
 
