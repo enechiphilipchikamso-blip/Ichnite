@@ -132,16 +132,24 @@ test('safe upstream fetch bounds requests and redacts provider details', async (
       20
     );
 
-    await assert.rejects(
-      safeFetch('https://provider.example/?api-key=secret-marker'),
-      (error) => {
-        assert.equal(error.name, 'TimeoutError');
-        assert.equal(error.code, 'ETIMEDOUT');
-        assert.equal(error.message, 'Upstream request timed out');
-        assert.doesNotMatch(error.message + error.stack, /secret-marker/);
-        return true;
-      }
-    );
+    // AbortSignal.timeout() uses an unref'ed timer. Keep the test process alive
+    // while the mock transport waits for its abort event, as a real network
+    // request would keep its socket referenced.
+    const keepAlive = setTimeout(() => {}, 100);
+    try {
+      await assert.rejects(
+        safeFetch('https://provider.example/?api-key=secret-marker'),
+        (error) => {
+          assert.equal(error.name, 'TimeoutError');
+          assert.equal(error.code, 'ETIMEDOUT');
+          assert.equal(error.message, 'Upstream request timed out');
+          assert.doesNotMatch(error.message + error.stack, /secret-marker/);
+          return true;
+        }
+      );
+    } finally {
+      clearTimeout(keepAlive);
+    }
   });
 
   await t.test('retains upstream HTTP status without retaining URL or provider text', async () => {
