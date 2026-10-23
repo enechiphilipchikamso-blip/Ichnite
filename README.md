@@ -4,7 +4,7 @@
 
 Ichnite is a read-only Solana wallet explorer and installable progressive web app (PWA). Enter a public wallet address to inspect SOL balance and market information, token holdings, NFTs, wallet activity, recent transactions, wallet age, and estimated net worth in one interface. Each major data section reports its own loading, failure, or partial-data state so one provider problem does not have to hide every other result.
 
-**[Open Ichnite](https://ichnite.vercel.app/)** · [Repository](https://github.com/enechiphilipchikamso-blip/Ichnite) · [Node.js security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
+**[Open the live app](https://ichnite.vercel.app/)** • [Ichnite · Solana Wallet Checker](https://ichnite.vercel.app/)
 
 ## Try it in 60 seconds
 
