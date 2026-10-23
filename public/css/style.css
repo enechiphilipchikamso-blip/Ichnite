@@ -238,6 +238,50 @@ main {
   margin: 32px auto;
 }
 
+/* Keyboard users need a visible focus indicator on every interactive control. */
+:where(button, a, input, textarea, select, [role="button"], [role="option"]):focus-visible {
+  outline: 2px solid var(--sky-blue);
+  outline-offset: 3px;
+}
+
+button:disabled,
+button[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* Keep the wallet field usable on narrow screens without shrinking the action target. */
+@media (max-width: 480px) {
+  .main-wrapper {
+    padding-inline: 12px;
+  }
+
+  .search-box {
+    border-radius: 20px;
+    padding: 10px;
+    gap: 8px;
+  }
+
+  #walletInput {
+    flex-basis: 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #clearBtn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  #searchBtn {
+    flex: 1;
+    min-height: 44px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+}
+
 /* ── Hidden Utility ── */
 .hidden {
   display: none !important;
